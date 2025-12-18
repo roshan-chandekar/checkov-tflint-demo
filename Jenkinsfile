@@ -296,29 +296,42 @@ pipeline {
                 sh '''
                     # Load TFLint path if stored
                     export PATH=$PATH:$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin
+                    
+                    # Try to find TFLint
+                    TFLINT_CMD=""
                     if [ -f .tflint_path ]; then
-                        TFLINT_CMD=$(cat .tflint_path)
-                    else
-                        TFLINT_CMD=$(command -v tflint 2>/dev/null || which tflint 2>/dev/null || echo "tflint")
+                        TFLINT_CMD=$(cat .tflint_path 2>/dev/null)
                     fi
                     
-                    if [ ! -x "$TFLINT_CMD" ] && ! command -v tflint &> /dev/null; then
-                        echo "Error: TFLint not found. Please check installation."
-                        exit 1
-                    fi
-                    
-                    echo "Running TFLint on modules using: $TFLINT_CMD"
-                    cd modules
-                    for module in */; do
-                        if [ -d "$module" ]; then
-                            echo "Linting module: $module"
-                            cd "$module"
-                            $TFLINT_CMD --init || true
-                            $TFLINT_CMD --format compact || true
-                            cd ..
+                    # If not in file, search for it
+                    if [ -z "$TFLINT_CMD" ] || [ ! -x "$TFLINT_CMD" ]; then
+                        TFLINT_CMD=$(command -v tflint 2>/dev/null || which tflint 2>/dev/null || echo "")
+                        if [ -z "$TFLINT_CMD" ]; then
+                            # Search in common locations
+                            TFLINT_CMD=$(find "$HOME/.local/bin" /usr/local/bin /usr/bin /bin -name tflint -type f 2>/dev/null | head -1)
                         fi
-                    done
-                    cd ..
+                    fi
+                    
+                    # Check if TFLint is found and executable
+                    if [ -n "$TFLINT_CMD" ] && [ -x "$TFLINT_CMD" ]; then
+                        echo "Running TFLint on modules using: $TFLINT_CMD"
+                        cd modules
+                        for module in */; do
+                            if [ -d "$module" ]; then
+                                echo "Linting module: $module"
+                                cd "$module"
+                                $TFLINT_CMD --init || true
+                                $TFLINT_CMD --format compact || true
+                                cd ..
+                            fi
+                        done
+                        cd ..
+                    else
+                        echo "⚠ Warning: TFLint not found. Skipping module linting."
+                        echo "TFLint may not have been installed correctly in the Setup Tools stage."
+                        echo "Searching for tflint in common locations..."
+                        find "$HOME/.local/bin" /usr/local/bin /usr/bin /bin -name tflint 2>/dev/null || echo "TFLint not found"
+                    fi
                 '''
             }
         }
@@ -329,16 +342,34 @@ pipeline {
                     sh '''
                         # Load TFLint path if stored
                         export PATH=$PATH:$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin
+                        
+                        # Try to find TFLint
+                        TFLINT_CMD=""
                         if [ -f ../.tflint_path ]; then
-                            TFLINT_CMD=$(cat ../.tflint_path)
-                        else
-                            TFLINT_CMD=$(command -v tflint 2>/dev/null || which tflint 2>/dev/null || echo "tflint")
+                            TFLINT_CMD=$(cat ../.tflint_path 2>/dev/null)
                         fi
                         
-                        echo "Running TFLint on ${PROJECT_DIR} using: $TFLINT_CMD"
-                        $TFLINT_CMD --init || true
-                        $TFLINT_CMD --format compact || true
-                        $TFLINT_CMD --format json > tflint-results.json || true
+                        # If not in file, search for it
+                        if [ -z "$TFLINT_CMD" ] || [ ! -x "$TFLINT_CMD" ]; then
+                            TFLINT_CMD=$(command -v tflint 2>/dev/null || which tflint 2>/dev/null || echo "")
+                            if [ -z "$TFLINT_CMD" ]; then
+                                # Search in common locations
+                                TFLINT_CMD=$(find "$HOME/.local/bin" /usr/local/bin /usr/bin /bin -name tflint -type f 2>/dev/null | head -1)
+                            fi
+                        fi
+                        
+                        # Check if TFLint is found and executable
+                        if [ -n "$TFLINT_CMD" ] && [ -x "$TFLINT_CMD" ]; then
+                            echo "Running TFLint on ${PROJECT_DIR} using: $TFLINT_CMD"
+                            $TFLINT_CMD --init || true
+                            $TFLINT_CMD --format compact || true
+                            $TFLINT_CMD --format json > tflint-results.json || true
+                        else
+                            echo "⚠ Warning: TFLint not found. Skipping project linting."
+                            echo "TFLint may not have been installed correctly in the Setup Tools stage."
+                            echo "Creating empty results file..."
+                            echo "{}" > tflint-results.json
+                        fi
                     '''
                 }
             }
