@@ -403,7 +403,8 @@ pipeline {
                             # Get current directory path relative to workspace root
                             CURRENT_DIR=$(pwd)
                             WORKSPACE_ROOT=$(cd ../.. && pwd)
-                            RELATIVE_PATH=$(echo "$CURRENT_DIR" | sed "s|^$WORKSPACE_ROOT/||")
+                            # Use parameter expansion instead of sed to avoid Groovy parsing issues
+                            RELATIVE_PATH=${CURRENT_DIR#$WORKSPACE_ROOT/}
                             
                             # Run TFLint with default format (shows file names, line numbers, and issues)
                             echo "--- TFLint output for ${RELATIVE_PATH} (shows full paths) ---"
@@ -453,7 +454,12 @@ pipeline {
                                     if command -v jq &> /dev/null; then
                                         # Extract and show full path information
                                         echo "Issues found:"
-                                        cat tflint-results.json | jq -r '.issues[] | "\(.range.filename):\(.range.start.line):\(.range.start.column) - \(.rule.name): \(.message)"' 2>/dev/null | head -50 || cat tflint-results.json | head -50
+                                        # Use simpler jq commands to avoid Groovy parsing issues with backslashes
+                                        cat tflint-results.json | jq -r '.issues[] | .range.filename + ":" + (.range.start.line | tostring) + ":" + (.range.start.column | tostring) + " - " + .rule.name + ": " + .message' 2>/dev/null | head -50 || {
+                                            # Fallback: show raw JSON if jq format fails
+                                            echo "Showing raw JSON structure:"
+                                            cat tflint-results.json | head -50
+                                        }
                                         echo ""
                                         echo "Full JSON structure (first issue with complete path):"
                                         cat tflint-results.json | jq '.issues[0] | {full_path: .range.filename, line: .range.start.line, column: .range.start.column, rule: .rule.name, message: .message}' 2>/dev/null || cat tflint-results.json | head -30
