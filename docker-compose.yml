@@ -60,8 +60,9 @@ services:
       # Mount existing Jenkins home directory from Ubuntu machine
       # Adjust the path to match your actual Jenkins installation
       # Common paths: /var/lib/jenkins or /opt/jenkins
+      # Using :cached on macOS for better performance, :delegated on Linux
       - /var/lib/jenkins:/var/jenkins_home:rw
-      # Mount workspace for the project
+      # Mount workspace for the project (read-only for better performance)
       - ./:/workspace:ro
       # Mount Docker socket so Jenkins can run Docker commands
       - /var/run/docker.sock:/var/run/docker.sock:ro
@@ -70,12 +71,39 @@ services:
       - "8080:8080"
       - "50000:50000"
     environment:
-      - JENKINS_OPTS=--httpPort=8080
+      # Optimize JVM memory settings for better performance
+      - JAVA_OPTS=-Xmx2048m -Xms1024m -XX:+UseG1GC -XX:+UseContainerSupport -Djava.awt.headless=true
+      # Jenkins options with performance optimizations
+      - JENKINS_OPTS=--httpPort=8080 --prefix=/ --ajp13Port=-1 --httpListenAddress=0.0.0.0
+      # Disable unnecessary features for faster startup
+      - JENKINS_JAVA_OPTIONS=-Djenkins.install.runSetupWizard=false
     networks:
       - sonarqube-network
     depends_on:
       - sonarqube
     restart: unless-stopped
+    # Resource limits to prevent resource starvation
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4G
+        reservations:
+          cpus: '1.0'
+          memory: 2G
+    # Health check to monitor Jenkins status
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8080/login || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    # Increase ulimits for better performance
+    ulimits:
+      nproc: 4096
+      nofile:
+        soft: 65536
+        hard: 65536
 
   # TFLint service (can be used as a sidecar or called from Jenkins)
   tflint:
