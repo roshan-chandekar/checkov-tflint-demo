@@ -548,12 +548,25 @@ pipeline {
                     CHECKOV_EXIT=$?
                     set -e
                     
-                    # Ensure JSON file exists and has content (Checkov might write empty file if no issues)
-                    # Check if file is empty, missing, or just contains {} (with any whitespace)
-                    if [ ! -f checkov-modules-results.json ] || [ ! -s checkov-modules-results.json ] || [ "$(cat checkov-modules-results.json 2>/dev/null | tr -d '[:space:]')" = "{}" ]; then
-                        echo "Checkov modules results file is empty or missing, creating proper JSON structure..."
-                        # Create a valid Checkov JSON structure
-                        echo '{"summary":{"passed":0,"failed":0,"skipped":0,"parsing_errors":0,"resource_count":0,"checkov_version":"unknown"},"results":{"passed_checks":[],"failed_checks":[],"skipped_checks":[],"parsing_errors":[]}}' > checkov-modules-results.json
+                    # Check if Checkov actually wrote valid results
+                    if [ ! -f checkov-modules-results.json ] || [ ! -s checkov-modules-results.json ]; then
+                        echo "⚠ Warning: Checkov did not create results file. Check CLI output above for errors."
+                        # Create fallback structure only if file is truly missing
+                        echo '{"summary":{"passed":0,"failed":0,"skipped":0,"parsing_errors":1,"resource_count":0,"checkov_version":"unknown"},"results":{"passed_checks":[],"failed_checks":[],"skipped_checks":[],"parsing_errors":[{"file_path":"modules","check_id":"CHECKOV_EXECUTION_ERROR","check_name":"Checkov Execution","check_class":"","check_result":{"result":"FAILED","evaluated_keys":[]},"code_block":[],"file_line_range":[],"resource":"","evaluation_message":"Checkov did not produce output file - check CLI output for errors","file_abs_path":"modules"}]}}' > checkov-modules-results.json
+                    elif [ "$(cat checkov-modules-results.json 2>/dev/null | tr -d '[:space:]')" = "{}" ]; then
+                        echo "⚠ Warning: Checkov wrote empty JSON. This may indicate no resources were found or a parsing issue."
+                        # Try to extract actual Checkov version and results from CLI output if available
+                        CHECKOV_VERSION="unknown"
+                        if [ -f checkov-modules-output.txt ]; then
+                            CHECKOV_VERSION=$(grep -i "checkov version" checkov-modules-output.txt | head -1 | sed 's/.*version[[:space:]]*\([0-9.]*\).*/\1/' || echo "unknown")
+                        fi
+                        echo "{\"summary\":{\"passed\":0,\"failed\":0,\"skipped\":0,\"parsing_errors\":0,\"resource_count\":0,\"checkov_version\":\"$CHECKOV_VERSION\"},\"results\":{\"passed_checks\":[],\"failed_checks\":[],\"skipped_checks\":[],\"parsing_errors\":[]}}" > checkov-modules-results.json
+                    else
+                        # File exists and has content - verify it's valid JSON and show summary
+                        if command -v jq > /dev/null 2>&1; then
+                            RESOURCE_COUNT=$(jq -r '.summary.resource_count // 0' checkov-modules-results.json 2>/dev/null || echo "0")
+                            echo "✓ Checkov scan completed. Found $RESOURCE_COUNT resources."
+                        fi
                     fi
                     
                     # Show CLI output
@@ -637,12 +650,25 @@ pipeline {
                         CHECKOV_EXIT=$?
                         set -e
                         
-                        # Ensure JSON file exists and has content (Checkov might write empty file if no issues)
-                        # Check if file is empty, missing, or just contains {} (with any whitespace)
-                        if [ ! -f checkov-results.json ] || [ ! -s checkov-results.json ] || [ "$(cat checkov-results.json 2>/dev/null | tr -d '[:space:]')" = "{}" ]; then
-                            echo "Checkov results file is empty or missing, creating proper JSON structure..."
-                            # Create a valid Checkov JSON structure
-                            echo '{"summary":{"passed":0,"failed":0,"skipped":0,"parsing_errors":0,"resource_count":0,"checkov_version":"unknown"},"results":{"passed_checks":[],"failed_checks":[],"skipped_checks":[],"parsing_errors":[]}}' > checkov-results.json
+                        # Check if Checkov actually wrote valid results
+                        if [ ! -f checkov-results.json ] || [ ! -s checkov-results.json ]; then
+                            echo "⚠ Warning: Checkov did not create results file. Check CLI output above for errors."
+                            # Create fallback structure only if file is truly missing
+                            echo '{"summary":{"passed":0,"failed":0,"skipped":0,"parsing_errors":1,"resource_count":0,"checkov_version":"unknown"},"results":{"passed_checks":[],"failed_checks":[],"skipped_checks":[],"parsing_errors":[{"file_path":"'${PROJECT_DIR}'","check_id":"CHECKOV_EXECUTION_ERROR","check_name":"Checkov Execution","check_class":"","check_result":{"result":"FAILED","evaluated_keys":[]},"code_block":[],"file_line_range":[],"resource":"","evaluation_message":"Checkov did not produce output file - check CLI output for errors","file_abs_path":"'${PROJECT_DIR}'"}]}}' > checkov-results.json
+                        elif [ "$(cat checkov-results.json 2>/dev/null | tr -d '[:space:]')" = "{}" ]; then
+                            echo "⚠ Warning: Checkov wrote empty JSON. This may indicate no resources were found or a parsing issue."
+                            # Try to extract actual Checkov version and results from CLI output if available
+                            CHECKOV_VERSION="unknown"
+                            if [ -f checkov-output.txt ]; then
+                                CHECKOV_VERSION=$(grep -i "checkov version" checkov-output.txt | head -1 | sed 's/.*version[[:space:]]*\([0-9.]*\).*/\1/' || echo "unknown")
+                            fi
+                            echo "{\"summary\":{\"passed\":0,\"failed\":0,\"skipped\":0,\"parsing_errors\":0,\"resource_count\":0,\"checkov_version\":\"$CHECKOV_VERSION\"},\"results\":{\"passed_checks\":[],\"failed_checks\":[],\"skipped_checks\":[],\"parsing_errors\":[]}}" > checkov-results.json
+                        else
+                            # File exists and has content - verify it's valid JSON and show summary
+                            if command -v jq > /dev/null 2>&1; then
+                                RESOURCE_COUNT=$(jq -r '.summary.resource_count // 0' checkov-results.json 2>/dev/null || echo "0")
+                                echo "✓ Checkov scan completed. Found $RESOURCE_COUNT resources."
+                            fi
                         fi
                         
                         # Show CLI output
