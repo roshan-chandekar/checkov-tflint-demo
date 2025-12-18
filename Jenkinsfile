@@ -62,11 +62,15 @@ pipeline {
 
                     // Install Checkov
                     sh '''
-                        if command -v checkov &> /dev/null; then
-                            echo "Checkov already installed: $(checkov --version)"
+                        # Set PATH first to include common installation locations
+                        export PATH=$PATH:~/.local/bin:/usr/local/bin:/usr/bin
+                        
+                        # Check if checkov is already installed and accessible
+                        CHECKOV_PATH=$(command -v checkov 2>/dev/null || which checkov 2>/dev/null || echo "")
+                        if [ -n "$CHECKOV_PATH" ] && [ -x "$CHECKOV_PATH" ]; then
+                            echo "Checkov already installed: $($CHECKOV_PATH --version 2>/dev/null || echo 'version check failed')"
                         else
                             echo "Installing Checkov..."
-                            export PATH=$PATH:~/.local/bin
                             
                             # Try pipx first (cleanest for externally-managed environments)
                             if command -v pipx &> /dev/null; then
@@ -74,43 +78,88 @@ pipeline {
                                 pipx install checkov
                                 export PATH=$PATH:~/.local/bin
                             # Try pip install with --break-system-packages for externally-managed environments
-                            elif pip3 install --user --break-system-packages checkov 2>/dev/null; then
+                            elif pip3 install --user --break-system-packages checkov 2>&1; then
                                 echo "Checkov installed with --break-system-packages flag"
+                                export PATH=$PATH:~/.local/bin
                             # Fallback: try regular pip install
-                            elif pip3 install --user checkov 2>/dev/null; then
+                            elif pip3 install --user checkov 2>&1; then
                                 echo "Checkov installed successfully"
+                                export PATH=$PATH:~/.local/bin
                             else
                                 echo "Warning: Checkov installation failed. Trying alternative method..."
                                 # Last resort: install with system packages override
-                                pip3 install --break-system-packages checkov || echo "Checkov installation failed, but continuing..."
+                                pip3 install --break-system-packages checkov 2>&1 || echo "Checkov installation failed, but continuing..."
                             fi
                             
-                            # Ensure PATH includes local bin directories
-                            export PATH=$PATH:~/.local/bin:/usr/local/bin
+                            # Update PATH and verify installation
+                            export PATH=$PATH:~/.local/bin:/usr/local/bin:/usr/bin
+                            CHECKOV_PATH=$(command -v checkov 2>/dev/null || which checkov 2>/dev/null || find ~/.local/bin /usr/local/bin /usr/bin -name checkov 2>/dev/null | head -1 || echo "")
                         fi
                         
-                        # Verify and show version
-                        if command -v checkov &> /dev/null; then
-                            checkov --version
+                        # Verify and show version using the found path
+                        if [ -n "$CHECKOV_PATH" ] && [ -x "$CHECKOV_PATH" ]; then
+                            echo "Checkov found at: $CHECKOV_PATH"
+                            $CHECKOV_PATH --version || echo "Version check failed, but checkov exists"
                         else
-                            echo "Warning: Checkov command not found. Some stages may fail."
+                            echo "Warning: Checkov command not found after installation attempt."
                             echo "PATH: $PATH"
+                            echo "Searching for checkov..."
+                            find ~/.local/bin /usr/local/bin /usr/bin -name checkov 2>/dev/null || echo "Checkov not found in common locations"
                         fi
                     '''
 
                     // Install TFLint
                     sh '''
-                        if command -v tflint &> /dev/null; then
-                            echo "TFLint already installed: $(tflint --version)"
+                        # Set PATH first to include common installation locations
+                        export PATH=$PATH:/usr/local/bin:/usr/bin:/bin
+                        
+                        # Check if tflint is already installed and accessible
+                        TFLINT_PATH=$(command -v tflint 2>/dev/null || which tflint 2>/dev/null || echo "")
+                        if [ -n "$TFLINT_PATH" ] && [ -x "$TFLINT_PATH" ]; then
+                            echo "TFLint already installed: $($TFLINT_PATH --version 2>/dev/null || echo 'version check failed')"
                         else
                             echo "Installing TFLint..."
                             wget -q https://github.com/terraform-linters/tflint/releases/download/${TFLINT_VERSION}/tflint_linux_amd64.zip
-                            unzip -o -q tflint_linux_amd64.zip
-                            sudo mv tflint /usr/local/bin/ 2>/dev/null || mv tflint /usr/local/bin/
-                            rm -f tflint_linux_amd64.zip
-                            echo "TFLint installed successfully"
+                            
+                            if [ -f tflint_linux_amd64.zip ]; then
+                                unzip -o -q tflint_linux_amd64.zip
+                                
+                                # Try to move to /usr/local/bin (requires sudo)
+                                if sudo mv tflint /usr/local/bin/ 2>/dev/null; then
+                                    echo "TFLint installed to /usr/local/bin"
+                                    TFLINT_PATH="/usr/local/bin/tflint"
+                                # Fallback: move to current directory and add to PATH
+                                elif [ -f tflint ]; then
+                                    chmod +x tflint
+                                    mkdir -p ~/.local/bin
+                                    mv tflint ~/.local/bin/
+                                    export PATH=$PATH:~/.local/bin
+                                    TFLINT_PATH="$HOME/.local/bin/tflint"
+                                    echo "TFLint installed to ~/.local/bin"
+                                else
+                                    echo "Error: TFLint binary not found after extraction"
+                                fi
+                                
+                                rm -f tflint_linux_amd64.zip
+                            else
+                                echo "Error: Failed to download TFLint"
+                            fi
                         fi
-                        tflint --version
+                        
+                        # Update PATH and verify installation
+                        export PATH=$PATH:/usr/local/bin:/usr/bin:/bin:~/.local/bin
+                        TFLINT_PATH=$(command -v tflint 2>/dev/null || which tflint 2>/dev/null || find ~/.local/bin /usr/local/bin /usr/bin /bin -name tflint 2>/dev/null | head -1 || echo "")
+                        
+                        # Verify and show version using the found path
+                        if [ -n "$TFLINT_PATH" ] && [ -x "$TFLINT_PATH" ]; then
+                            echo "TFLint found at: $TFLINT_PATH"
+                            $TFLINT_PATH --version || echo "Version check failed, but tflint exists"
+                        else
+                            echo "Warning: TFLint command not found after installation attempt."
+                            echo "PATH: $PATH"
+                            echo "Searching for tflint..."
+                            find ~/.local/bin /usr/local/bin /usr/bin /bin -name tflint 2>/dev/null || echo "TFLint not found in common locations"
+                        fi
                     '''
                 }
             }
