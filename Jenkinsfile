@@ -25,9 +25,14 @@ pipeline {
             steps {
                 sh '''
                     export PATH=$PATH:$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin
-                    command -v terraform > /dev/null 2>&1 || { echo "ERROR: Terraform not found"; exit 1; }
-                    command -v checkov > /dev/null 2>&1 || { echo "ERROR: Checkov not found"; exit 1; }
-                    command -v tflint > /dev/null 2>&1 || { echo "ERROR: TFLint not found"; exit 1; }
+                    TERRAFORM_CMD=$(command -v terraform 2>/dev/null || find /usr/local/bin /usr/bin -name terraform 2>/dev/null | head -1)
+                    CHECKOV_CMD=$(command -v checkov 2>/dev/null || find $HOME/.local/bin /usr/local/bin /usr/bin -name checkov 2>/dev/null | head -1)
+                    TFLINT_CMD=$(command -v tflint 2>/dev/null || find $HOME/.local/bin /usr/local/bin /usr/bin -name tflint 2>/dev/null | head -1)
+                    [ -z "$TERRAFORM_CMD" ] && { echo "ERROR: Terraform not found"; exit 1; }
+                    [ -z "$CHECKOV_CMD" ] && { echo "ERROR: Checkov not found"; exit 1; }
+                    [ -z "$TFLINT_CMD" ] && { echo "ERROR: TFLint not found"; exit 1; }
+                    echo "$CHECKOV_CMD" > .checkov_path
+                    echo "$TFLINT_CMD" > .tflint_path
                     echo "All tools verified"
                 '''
             }
@@ -53,10 +58,11 @@ pipeline {
         stage('TFLint - Modules') {
             steps {
                 sh '''
+                    TFLINT_CMD=$(cat .tflint_path 2>/dev/null || command -v tflint 2>/dev/null || find $HOME/.local/bin /usr/local/bin /usr/bin -name tflint 2>/dev/null | head -1)
                     [ -f .tflint.hcl ] && cp .tflint.hcl modules/.tflint.hcl || true
                     cd modules
                     for module in */; do
-                        [ -d "$module" ] && cd "$module" && tflint --init > /dev/null 2>&1 && tflint || true
+                        [ -d "$module" ] && cd "$module" && $TFLINT_CMD --init > /dev/null 2>&1 && $TFLINT_CMD || true
                         cd ..
                     done
                 '''
@@ -67,9 +73,10 @@ pipeline {
             steps {
                 dir(env.PROJECT_DIR) {
                     sh '''
+                        TFLINT_CMD=$(cat ../.tflint_path 2>/dev/null || command -v tflint 2>/dev/null || find $HOME/.local/bin /usr/local/bin /usr/bin -name tflint 2>/dev/null | head -1)
                         [ -f ../../.tflint.hcl ] && cp ../../.tflint.hcl .tflint.hcl || true
-                        tflint --init > /dev/null 2>&1
-                        tflint --format json > tflint-results.json 2>&1 || echo '{"issues":[],"errors":[]}' > tflint-results.json
+                        $TFLINT_CMD --init > /dev/null 2>&1
+                        $TFLINT_CMD --format json > tflint-results.json 2>&1 || echo '{"issues":[],"errors":[]}' > tflint-results.json
                     '''
                 }
             }
@@ -83,9 +90,10 @@ pipeline {
         stage('Checkov - Modules') {
             steps {
                 sh '''
+                    CHECKOV_CMD=$(cat .checkov_path 2>/dev/null || command -v checkov 2>/dev/null || find $HOME/.local/bin /usr/local/bin /usr/bin -name checkov 2>/dev/null | head -1)
                     CHECKOV_SKIP="--skip-check CKV_AWS_18 --skip-check CKV_AWS_19 --skip-check CKV_AWS_144"
                     [ -f .checkov.yaml ] && CHECKOV_CONFIG="--config-file .checkov.yaml" || CHECKOV_CONFIG=""
-                    checkov -d modules --framework terraform $CHECKOV_CONFIG $CHECKOV_SKIP --output json --output-file-path checkov-modules-results.json --soft-fail || true
+                    $CHECKOV_CMD -d modules --framework terraform $CHECKOV_CONFIG $CHECKOV_SKIP --output json --output-file-path checkov-modules-results.json --soft-fail || true
                     [ ! -s checkov-modules-results.json ] && echo '{"summary":{"passed":0,"failed":0,"skipped":0,"parsing_errors":0,"resource_count":0},"results":{"passed_checks":[],"failed_checks":[],"skipped_checks":[],"parsing_errors":[]}}' > checkov-modules-results.json
                 '''
             }
@@ -100,9 +108,10 @@ pipeline {
             steps {
                 dir(env.PROJECT_DIR) {
                     sh '''
+                        CHECKOV_CMD=$(cat ../.checkov_path 2>/dev/null || command -v checkov 2>/dev/null || find $HOME/.local/bin /usr/local/bin /usr/bin -name checkov 2>/dev/null | head -1)
                         CHECKOV_SKIP="--skip-check CKV_AWS_18 --skip-check CKV_AWS_19 --skip-check CKV_AWS_144"
                         [ -f ../../.checkov.yaml ] && CHECKOV_CONFIG="--config-file ../../.checkov.yaml" || CHECKOV_CONFIG=""
-                        checkov -d . --framework terraform $CHECKOV_CONFIG $CHECKOV_SKIP --output json --output-file-path checkov-results.json --soft-fail || true
+                        $CHECKOV_CMD -d . --framework terraform $CHECKOV_CONFIG $CHECKOV_SKIP --output json --output-file-path checkov-results.json --soft-fail || true
                         [ ! -s checkov-results.json ] && echo '{"summary":{"passed":0,"failed":0,"skipped":0,"parsing_errors":0,"resource_count":0},"results":{"passed_checks":[],"failed_checks":[],"skipped_checks":[],"parsing_errors":[]}}' > checkov-results.json
                     '''
                 }
@@ -144,9 +153,10 @@ pipeline {
                     sh '''
                         [ ! -f tfplan ] && { echo '{"summary":{"passed":0,"failed":0,"skipped":0,"parsing_errors":0,"resource_count":0},"results":{"passed_checks":[],"failed_checks":[],"skipped_checks":[],"parsing_errors":[]}}' > checkov-plan-results.json; exit 0; }
                         terraform show -json tfplan > tfplan.json
+                        CHECKOV_CMD=$(cat ../.checkov_path 2>/dev/null || command -v checkov 2>/dev/null || find $HOME/.local/bin /usr/local/bin /usr/bin -name checkov 2>/dev/null | head -1)
                         CHECKOV_SKIP="--skip-check CKV_AWS_18 --skip-check CKV_AWS_19 --skip-check CKV_AWS_144"
                         [ -f ../../.checkov.yaml ] && CHECKOV_CONFIG="--config-file ../../.checkov.yaml" || CHECKOV_CONFIG=""
-                        checkov -f tfplan.json --framework terraform_plan $CHECKOV_CONFIG $CHECKOV_SKIP --output json --output-file-path checkov-plan-results.json --soft-fail || true
+                        $CHECKOV_CMD -f tfplan.json --framework terraform_plan $CHECKOV_CONFIG $CHECKOV_SKIP --output json --output-file-path checkov-plan-results.json --soft-fail || true
                         [ ! -s checkov-plan-results.json ] && echo '{"summary":{"passed":0,"failed":0,"skipped":0,"parsing_errors":0,"resource_count":0},"results":{"passed_checks":[],"failed_checks":[],"skipped_checks":[],"parsing_errors":[]}}' > checkov-plan-results.json
                     '''
                 }
