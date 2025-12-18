@@ -47,21 +47,17 @@ services:
         hard: 65536
     restart: unless-stopped
 
-  # Jenkins with existing workspace mounted
-  # NOTE: If you have Jenkins already running on Ubuntu, either:
-  # 1. Stop it first: sudo systemctl stop jenkins
-  # 2. Or change the port below to avoid conflicts (e.g., "8081:8080")
-  # 3. Or comment out this service and use your existing Jenkins
+  # Jenkins - Fresh instance with new data volume
+  # NOTE: This uses a Docker volume for Jenkins data (fresh start)
+  # If you want to use existing Jenkins data, change jenkins_data volume to bind mount:
+  # - /var/lib/jenkins:/var/jenkins_home:rw
   jenkins:
     image: jenkins/jenkins:lts
     container_name: jenkins-docker
     user: root
     volumes:
-      # Mount existing Jenkins home directory from Ubuntu machine
-      # Adjust the path to match your actual Jenkins installation
-      # Common paths: /var/lib/jenkins or /opt/jenkins
-      # Using :cached on macOS for better performance, :delegated on Linux
-      - /var/lib/jenkins:/var/jenkins_home:rw
+      # Use Docker volume for fresh Jenkins data (isolated from host)
+      - jenkins_data:/var/jenkins_home:rw
       # Mount workspace for the project (read-only for better performance)
       - ./:/workspace:ro
       # Mount Docker socket so Jenkins can run Docker commands
@@ -152,6 +148,10 @@ volumes:
     driver: local
   sonar_scanner_cache:
     driver: local
+  jenkins_data:
+    driver: local
+    # Fresh Jenkins data volume - isolated from host
+    # To remove and start fresh: docker volume rm checkov-tflint-demo_jenkins_data
 
 networks:
   sonarqube-network:
