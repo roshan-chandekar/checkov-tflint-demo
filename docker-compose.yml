@@ -133,6 +133,20 @@ services:
     depends_on:
       - sonarqube
 
+  # Terraform service (can be used from Jenkins)
+  terraform:
+    image: hashicorp/terraform:latest
+    container_name: terraform
+    volumes:
+      - ./:/workspace:ro
+      - terraform_cache:/root/.terraform.d
+    working_dir: /workspace
+    networks:
+      - sonarqube-network
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["tail -f /dev/null"]
+    restart: unless-stopped
+
 volumes:
   sonarqube_db_data:
     driver: local
@@ -147,6 +161,8 @@ volumes:
   checkov_cache:
     driver: local
   sonar_scanner_cache:
+    driver: local
+  terraform_cache:
     driver: local
   jenkins_data:
     driver: local

@@ -34,16 +34,40 @@ pipeline {
         stage('Verify Tools') {
             steps {
                 sh '''
-                    export PATH=$PATH:$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin
-                    TERRAFORM_CMD=$(command -v terraform 2>/dev/null || find /usr/local/bin /usr/bin -name terraform 2>/dev/null | head -1)
-                    CHECKOV_CMD=$(command -v checkov 2>/dev/null || find $HOME/.local/bin /usr/local/bin /usr/bin -name checkov 2>/dev/null | head -1)
-                    TFLINT_CMD=$(command -v tflint 2>/dev/null || find $HOME/.local/bin /usr/local/bin /usr/bin -name tflint 2>/dev/null | head -1)
-                    [ -z "$TERRAFORM_CMD" ] && { echo "ERROR: Terraform not found"; exit 1; }
-                    [ -z "$CHECKOV_CMD" ] && { echo "ERROR: Checkov not found"; exit 1; }
-                    [ -z "$TFLINT_CMD" ] && { echo "ERROR: TFLint not found"; exit 1; }
-                    echo "$CHECKOV_CMD" > .checkov_path
-                    echo "$TFLINT_CMD" > .tflint_path
-                    echo "All tools verified"
+                    # Check if Docker containers are running
+                    if ! command -v docker > /dev/null 2>&1; then
+                        echo "ERROR: Docker not found. Install Docker or use local tools."
+                        exit 1
+                    fi
+                    
+                    # Verify Terraform container
+                    if docker ps | grep -q "terraform"; then
+                        echo "✓ Terraform container is running"
+                        docker exec terraform terraform version
+                    else
+                        echo "ERROR: Terraform container not running. Start with: docker-compose up -d terraform"
+                        exit 1
+                    fi
+                    
+                    # Verify Checkov container
+                    if docker ps | grep -q "checkov"; then
+                        echo "✓ Checkov container is running"
+                        docker exec checkov checkov --version
+                    else
+                        echo "ERROR: Checkov container not running. Start with: docker-compose up -d checkov"
+                        exit 1
+                    fi
+                    
+                    # Verify TFLint container
+                    if docker ps | grep -q "tflint"; then
+                        echo "✓ TFLint container is running"
+                        docker exec tflint tflint --version
+                    else
+                        echo "ERROR: TFLint container not running. Start with: docker-compose up -d tflint"
+                        exit 1
+                    fi
+                    
+                    echo "All tools verified via Docker containers"
                 '''
             }
         }
@@ -68,12 +92,13 @@ pipeline {
         stage('TFLint - Modules') {
             steps {
                 sh '''
-                    TFLINT_CMD=$(cat .tflint_path 2>/dev/null || command -v tflint 2>/dev/null || find $HOME/.local/bin /usr/local/bin /usr/bin -name tflint 2>/dev/null | head -1)
                     [ -f .tflint.hcl ] && cp .tflint.hcl modules/.tflint.hcl || true
                     cd modules
                     for module in */; do
-                        [ -d "$module" ] && cd "$module" && $TFLINT_CMD --init > /dev/null 2>&1 && $TFLINT_CMD || true
-                        cd ..
+                        if [ -d "$module" ]; then
+                            docker exec -i -w /workspace/modules/"$module" tflint tflint --init > /dev/null 2>&1 || true
+                            docker exec -i -w /workspace/modules/"$module" tflint tflint || true
+                        fi
                     done
                 '''
             }
@@ -83,10 +108,9 @@ pipeline {
             steps {
                 dir(env.PROJECT_DIR) {
                     sh '''
-                        TFLINT_CMD=$(cat ../.tflint_path 2>/dev/null || command -v tflint 2>/dev/null || find $HOME/.local/bin /usr/local/bin /usr/bin -name tflint 2>/dev/null | head -1)
                         [ -f ../../.tflint.hcl ] && cp ../../.tflint.hcl .tflint.hcl || true
-                        $TFLINT_CMD --init > /dev/null 2>&1
-                        $TFLINT_CMD --format json > tflint-results.json 2>&1 || echo '{"issues":[],"errors":[]}' > tflint-results.json
+                        docker exec -i -w /workspace/${PROJECT_DIR} tflint tflint --init > /dev/null 2>&1 || true
+                        docker exec -i -w /workspace/${PROJECT_DIR} tflint tflint --format json > tflint-results.json 2>&1 || echo '{"issues":[],"errors":[]}' > tflint-results.json
                     '''
                 }
             }
@@ -100,13 +124,12 @@ pipeline {
         stage('Checkov - Modules') {
             steps {
                 sh '''
-                    CHECKOV_CMD=$(cat .checkov_path 2>/dev/null || command -v checkov 2>/dev/null || find $HOME/.local/bin /usr/local/bin /usr/bin -name checkov 2>/dev/null | head -1)
                     # Aggressive cleanup - remove file or directory
                     rm -rf checkov-modules-results.json checkov-modules-results.tmp 2>/dev/null || true
                     CHECKOV_SKIP="--skip-check CKV_AWS_18 --skip-check CKV_AWS_19 --skip-check CKV_AWS_144"
                     [ -f .checkov.yaml ] && CHECKOV_CONFIG="--config-file .checkov.yaml" || CHECKOV_CONFIG=""
-                    # Run Checkov and capture JSON output to temporary file first (redirect stderr to avoid mixing)
-                    $CHECKOV_CMD -d modules --framework terraform $CHECKOV_CONFIG $CHECKOV_SKIP --output json --soft-fail > checkov-modules-results.tmp 2>/dev/null || true
+                    # Run Checkov via Docker container and capture JSON output to temporary file first
+                    docker exec -i -w /workspace checkov checkov -d modules --framework terraform $CHECKOV_CONFIG $CHECKOV_SKIP --output json --soft-fail > checkov-modules-results.tmp 2>/dev/null || true
                     # Move temp file to final location (ensures it's a file)
                     if [ -f checkov-modules-results.tmp ] && [ -s checkov-modules-results.tmp ]; then
                         mv checkov-modules-results.tmp checkov-modules-results.json
@@ -132,13 +155,12 @@ pipeline {
             steps {
                 dir(env.PROJECT_DIR) {
                     sh '''
-                        CHECKOV_CMD=$(cat ../.checkov_path 2>/dev/null || command -v checkov 2>/dev/null || find $HOME/.local/bin /usr/local/bin /usr/bin -name checkov 2>/dev/null | head -1)
                         # Aggressive cleanup - remove file or directory
                         rm -rf checkov-results.json checkov-results.tmp 2>/dev/null || true
                         CHECKOV_SKIP="--skip-check CKV_AWS_18 --skip-check CKV_AWS_19 --skip-check CKV_AWS_144"
                         [ -f ../../.checkov.yaml ] && CHECKOV_CONFIG="--config-file ../../.checkov.yaml" || CHECKOV_CONFIG=""
-                        # Run Checkov and capture JSON output to temporary file first (redirect stderr to avoid mixing)
-                        $CHECKOV_CMD -d . --framework terraform $CHECKOV_CONFIG $CHECKOV_SKIP --output json --soft-fail > checkov-results.tmp 2>/dev/null || true
+                        # Run Checkov via Docker container and capture JSON output to temporary file first
+                        docker exec -i -w /workspace/${PROJECT_DIR} checkov checkov -d . --framework terraform $CHECKOV_CONFIG $CHECKOV_SKIP --output json --soft-fail > checkov-results.tmp 2>/dev/null || true
                         # Move temp file to final location (ensures it's a file)
                         if [ -f checkov-results.tmp ] && [ -s checkov-results.tmp ]; then
                             mv checkov-results.tmp checkov-results.json
@@ -165,7 +187,7 @@ pipeline {
         stage('Terraform Init') {
             steps {
                 dir(env.PROJECT_DIR) {
-                    sh 'terraform init -input=false'
+                    sh 'docker exec -i -w /workspace/${PROJECT_DIR} terraform terraform init -input=false'
                 }
             }
         }
@@ -173,7 +195,7 @@ pipeline {
         stage('Terraform Validate') {
             steps {
                 dir(env.PROJECT_DIR) {
-                    sh 'terraform validate'
+                    sh 'docker exec -i -w /workspace/${PROJECT_DIR} terraform terraform validate'
                 }
             }
         }
@@ -181,7 +203,7 @@ pipeline {
         stage('Terraform Plan') {
             steps {
                 dir(env.PROJECT_DIR) {
-                    sh 'terraform plan -out=tfplan -input=false'
+                    sh 'docker exec -i -w /workspace/${PROJECT_DIR} terraform terraform plan -out=tfplan -input=false'
                 }
             }
         }
@@ -191,14 +213,13 @@ pipeline {
                 dir(env.PROJECT_DIR) {
                     sh '''
                         [ ! -f tfplan ] && { echo '{"summary":{"passed":0,"failed":0,"skipped":0,"parsing_errors":0,"resource_count":0},"results":{"passed_checks":[],"failed_checks":[],"skipped_checks":[],"parsing_errors":[]}}' > checkov-plan-results.json; exit 0; }
-                        terraform show -json tfplan > tfplan.json
-                        CHECKOV_CMD=$(cat ../.checkov_path 2>/dev/null || command -v checkov 2>/dev/null || find $HOME/.local/bin /usr/local/bin /usr/bin -name checkov 2>/dev/null | head -1)
+                        docker exec -i -w /workspace/${PROJECT_DIR} terraform terraform show -json tfplan > tfplan.json
                         # Aggressive cleanup - remove file or directory
                         rm -rf checkov-plan-results.json checkov-plan-results.tmp 2>/dev/null || true
                         CHECKOV_SKIP="--skip-check CKV_AWS_18 --skip-check CKV_AWS_19 --skip-check CKV_AWS_144"
                         [ -f ../../.checkov.yaml ] && CHECKOV_CONFIG="--config-file ../../.checkov.yaml" || CHECKOV_CONFIG=""
-                        # Run Checkov and capture JSON output to temporary file first (redirect stderr to avoid mixing)
-                        $CHECKOV_CMD -f tfplan.json --framework terraform_plan $CHECKOV_CONFIG $CHECKOV_SKIP --output json --soft-fail > checkov-plan-results.tmp 2>/dev/null || true
+                        # Run Checkov via Docker container and capture JSON output to temporary file first
+                        docker exec -i -w /workspace/${PROJECT_DIR} checkov checkov -f tfplan.json --framework terraform_plan $CHECKOV_CONFIG $CHECKOV_SKIP --output json --soft-fail > checkov-plan-results.tmp 2>/dev/null || true
                         # Move temp file to final location (ensures it's a file)
                         if [ -f checkov-plan-results.tmp ] && [ -s checkov-plan-results.tmp ]; then
                             mv checkov-plan-results.tmp checkov-plan-results.json
