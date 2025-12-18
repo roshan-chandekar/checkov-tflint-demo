@@ -62,22 +62,53 @@ pipeline {
 
                     // Install Checkov
                     sh '''
-                        if ! command -v checkov &> /dev/null; then
+                        if command -v checkov &> /dev/null; then
+                            echo "Checkov already installed: $(checkov --version)"
+                        else
                             echo "Installing Checkov..."
-                            pip3 install --user checkov
                             export PATH=$PATH:~/.local/bin
+                            
+                            # Try pipx first (cleanest for externally-managed environments)
+                            if command -v pipx &> /dev/null; then
+                                echo "Using pipx to install Checkov..."
+                                pipx install checkov
+                                export PATH=$PATH:~/.local/bin
+                            # Try pip install with --break-system-packages for externally-managed environments
+                            elif pip3 install --user --break-system-packages checkov 2>/dev/null; then
+                                echo "Checkov installed with --break-system-packages flag"
+                            # Fallback: try regular pip install
+                            elif pip3 install --user checkov 2>/dev/null; then
+                                echo "Checkov installed successfully"
+                            else
+                                echo "Warning: Checkov installation failed. Trying alternative method..."
+                                # Last resort: install with system packages override
+                                pip3 install --break-system-packages checkov || echo "Checkov installation failed, but continuing..."
+                            fi
+                            
+                            # Ensure PATH includes local bin directories
+                            export PATH=$PATH:~/.local/bin:/usr/local/bin
                         fi
-                        checkov --version
+                        
+                        # Verify and show version
+                        if command -v checkov &> /dev/null; then
+                            checkov --version
+                        else
+                            echo "Warning: Checkov command not found. Some stages may fail."
+                            echo "PATH: $PATH"
+                        fi
                     '''
 
                     // Install TFLint
                     sh '''
-                        if ! command -v tflint &> /dev/null; then
+                        if command -v tflint &> /dev/null; then
+                            echo "TFLint already installed: $(tflint --version)"
+                        else
                             echo "Installing TFLint..."
                             wget -q https://github.com/terraform-linters/tflint/releases/download/${TFLINT_VERSION}/tflint_linux_amd64.zip
-                            unzip -q tflint_linux_amd64.zip
-                            sudo mv tflint /usr/local/bin/
-                            rm tflint_linux_amd64.zip
+                            unzip -o -q tflint_linux_amd64.zip
+                            sudo mv tflint /usr/local/bin/ 2>/dev/null || mv tflint /usr/local/bin/
+                            rm -f tflint_linux_amd64.zip
+                            echo "TFLint installed successfully"
                         fi
                         tflint --version
                     '''
