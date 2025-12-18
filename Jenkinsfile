@@ -34,9 +34,35 @@ pipeline {
         stage('Verify Tools') {
             steps {
                 sh '''
-                    # Check if Docker containers are running
+                    # Check if Docker socket is accessible (Jenkins container has Docker socket mounted)
+                    if [ ! -S /var/run/docker.sock ]; then
+                        echo "ERROR: Docker socket not found at /var/run/docker.sock"
+                        echo "Ensure Jenkins container has Docker socket mounted"
+                        exit 1
+                    fi
+                    
+                    # Install Docker CLI if not available (Jenkins container may not have it)
                     if ! command -v docker > /dev/null 2>&1; then
-                        echo "ERROR: Docker not found. Install Docker or use local tools."
+                        echo "Docker CLI not found, installing..."
+                        # Try to install Docker CLI (Jenkins container runs as root)
+                        if apt-get update -qq > /dev/null 2>&1 && apt-get install -y -qq docker.io curl > /dev/null 2>&1; then
+                            echo "✓ Docker CLI installed successfully"
+                        elif which apk > /dev/null 2>&1 && apk add --no-cache docker-cli > /dev/null 2>&1; then
+                            echo "✓ Docker CLI installed successfully (Alpine)"
+                        else
+                            echo "WARNING: Could not install Docker CLI automatically"
+                            echo "Docker socket is available, but docker command not found"
+                            echo "You may need to install Docker CLI manually or use a custom Jenkins image"
+                            exit 1
+                        fi
+                    fi
+                    
+                    # Verify Docker is accessible
+                    if docker ps > /dev/null 2>&1; then
+                        echo "✓ Docker is accessible"
+                    else
+                        echo "ERROR: Cannot access Docker. Check permissions on /var/run/docker.sock"
+                        echo "Try: sudo chmod 666 /var/run/docker.sock (on host) or add jenkins user to docker group"
                         exit 1
                     fi
                     

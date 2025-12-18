@@ -62,6 +62,7 @@ services:
       - ./:/workspace:ro
       # Mount Docker socket so Jenkins can run Docker commands
       - /var/run/docker.sock:/var/run/docker.sock:ro
+    # Note: Docker CLI will be installed automatically by Jenkinsfile Verify Tools stage if needed
     ports:
       # Change 8080 to 8081 if your existing Jenkins uses 8080
       - "8080:8080"
