@@ -62,13 +62,26 @@ pipeline {
                         if [ -n "$MISSING_PKGS" ]; then
                             echo "Installing missing packages: $MISSING_PKGS"
                             sudo apt-get update -qq
-                            sudo apt-get install -y -qq $MISSING_PKGS
+                            sudo apt-get install -y -qq $MISSING_PKGS || {
+                                echo "Package installation failed. Trying individual packages..."
+                                for pkg in $MISSING_PKGS; do
+                                    sudo apt-get install -y -qq "$pkg" || echo "Failed to install $pkg"
+                                done
+                            }
                         else
                             echo "All required system packages are installed"
                         fi
         
+                        # Verify all tools are available
+                        echo "Verifying installed tools:"
+                        command -v wget &> /dev/null && echo "✓ wget" || echo "✗ wget not found"
+                        command -v unzip &> /dev/null && echo "✓ unzip" || echo "✗ unzip not found"
+                        command -v zip &> /dev/null && echo "✓ zip" || echo "✗ zip not found"
+                        command -v python3 &> /dev/null && echo "✓ python3" || echo "✗ python3 not found"
+                        command -v pip3 &> /dev/null && echo "✓ pip3" || echo "✗ pip3 not found"
+                        
                         # Verify Python and pip
-                        python3 --version
+                        python3 --version || echo "python3 version check failed"
                         pip3 --version || echo "pip3 not found, will install packages manually"
                     '''
                     
@@ -225,6 +238,25 @@ pipeline {
             steps {
                 dir('scripts') {
                     sh '''
+                        # Ensure zip is available
+                        export PATH=$PATH:/usr/bin:/bin
+                        if ! command -v zip &> /dev/null; then
+                            echo "zip command not found. Installing..."
+                            export DEBIAN_FRONTEND=noninteractive
+                            sudo apt-get update -qq
+                            sudo apt-get install -y -qq zip || {
+                                echo "Failed to install zip. Trying to continue..."
+                            }
+                        fi
+                        
+                        # Verify zip is now available
+                        if command -v zip &> /dev/null; then
+                            echo "zip command found: $(which zip)"
+                            zip --version | head -1
+                        else
+                            echo "Warning: zip command still not found after installation attempt"
+                        fi
+                        
                         echo "Building Lambda deployment package..."
                         chmod +x build_lambda.sh
                         ./build_lambda.sh
