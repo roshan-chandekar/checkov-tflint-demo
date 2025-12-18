@@ -7,6 +7,16 @@
 pipeline {
     agent any
 
+    // Discard old builds to prevent disk space issues
+    options {
+        buildDiscarder(logRotator(
+            numToKeepStr: '10',
+            daysToKeepStr: '7',
+            artifactNumToKeepStr: '5',
+            artifactDaysToKeepStr: '3'
+        ))
+    }
+
     parameters {
         choice(name: 'PROJECT', choices: ['dev', 'staging', 'prod'], description: 'Select project')
     }
