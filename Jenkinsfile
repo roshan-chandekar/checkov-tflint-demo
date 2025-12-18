@@ -139,11 +139,11 @@ pipeline {
         stage('TFLint - Project') {
             steps {
                 dir(env.PROJECT_DIR) {
-                    sh '''
+                    sh """
                         [ -f ../../.tflint.hcl ] && cp ../../.tflint.hcl .tflint.hcl || true
-                        docker exec -i -w /workspace/${PROJECT_DIR} tflint tflint --init > /dev/null 2>&1 || true
-                        docker exec -i -w /workspace/${PROJECT_DIR} tflint tflint --format json > tflint-results.json 2>&1 || echo '{"issues":[],"errors":[]}' > tflint-results.json
-                    '''
+                        docker exec -i -w /workspace/${env.PROJECT_DIR} tflint tflint --init > /dev/null 2>&1 || true
+                        docker exec -i -w /workspace/${env.PROJECT_DIR} tflint tflint --format json > tflint-results.json 2>&1 || echo '{\"issues\":[],\"errors\":[]}' > tflint-results.json
+                    """
                 }
             }
             post {
@@ -186,31 +186,32 @@ pipeline {
         stage('Checkov - Project') {
             steps {
                 dir(env.PROJECT_DIR) {
-                    sh '''
+                    sh """
                         # Aggressive cleanup - remove file or directory
                         rm -rf checkov-results.json checkov-results.tmp 2>/dev/null || true
-                        CHECKOV_SKIP="--skip-check CKV_AWS_18 --skip-check CKV_AWS_19 --skip-check CKV_AWS_144"
-                        [ -f ../../.checkov.yaml ] && CHECKOV_CONFIG="--config-file ../../.checkov.yaml" || CHECKOV_CONFIG=""
+                        CHECKOV_SKIP=\"--skip-check CKV_AWS_18 --skip-check CKV_AWS_19 --skip-check CKV_AWS_144\"
+                        [ -f ../../.checkov.yaml ] && CHECKOV_CONFIG=\"--config-file ../../.checkov.yaml\" || CHECKOV_CONFIG=\"\"
                         # Run Checkov via Docker container and capture JSON output to temporary file first
-                        docker exec -i -w /workspace/${PROJECT_DIR} checkov checkov -d . --framework terraform $CHECKOV_CONFIG $CHECKOV_SKIP --output json --soft-fail > checkov-results.tmp 2>/dev/null || true
+                        docker exec -i -w /workspace/${env.PROJECT_DIR} checkov checkov -d . --framework terraform \$CHECKOV_CONFIG \$CHECKOV_SKIP --output json --soft-fail > checkov-results.tmp 2>/dev/null || true
                         # Move temp file to final location (ensures it's a file)
                         if [ -f checkov-results.tmp ] && [ -s checkov-results.tmp ]; then
                             mv checkov-results.tmp checkov-results.json
                         else
-                            echo '{"summary":{"passed":0,"failed":0,"skipped":0,"parsing_errors":0,"resource_count":0},"results":{"passed_checks":[],"failed_checks":[],"skipped_checks":[],"parsing_errors":[]}}' > checkov-results.json
+                            echo '{\"summary\":{\"passed\":0,\"failed\":0,\"skipped\":0,\"parsing_errors\":0,\"resource_count\":0},\"results\":{\"passed_checks\":[],\"failed_checks\":[],\"skipped_checks\":[],\"parsing_errors\":[]}}' > checkov-results.json
                         fi
                         # Final safety check - remove directory if it exists
-                        [ -d checkov-results.json ] && rm -rf checkov-results.json && echo '{"summary":{"passed":0,"failed":0,"skipped":0,"parsing_errors":0,"resource_count":0},"results":{"passed_checks":[],"failed_checks":[],"skipped_checks":[],"parsing_errors":[]}}' > checkov-results.json || true
-                    '''
+                        [ -d checkov-results.json ] && rm -rf checkov-results.json && echo '{\"summary\":{\"passed\":0,\"failed\":0,\"skipped\":0,\"parsing_errors\":0,\"resource_count\":0},\"results\":{\"passed_checks\":[],\"failed_checks\":[],\"skipped_checks\":[],\"parsing_errors\":[]}}' > checkov-results.json || true
+                    """
                 }
             }
             post {
                 always {
-                    sh '''
-                        cd '${env.PROJECT_DIR}'
-                        [ -d checkov-results.json ] && rm -rf checkov-results.json || true
-                        [ ! -f checkov-results.json ] && echo "{}" > checkov-results.json || true
-                    '''
+                    dir(env.PROJECT_DIR) {
+                        sh '''
+                            [ -d checkov-results.json ] && rm -rf checkov-results.json || true
+                            [ ! -f checkov-results.json ] && echo "{}" > checkov-results.json || true
+                        '''
+                    }
                     archiveArtifacts artifacts: "${env.PROJECT_DIR}/checkov-results.json", allowEmptyArchive: true
                 }
             }
@@ -219,7 +220,7 @@ pipeline {
         stage('Terraform Init') {
             steps {
                 dir(env.PROJECT_DIR) {
-                    sh 'docker exec -i -w /workspace/${PROJECT_DIR} terraform terraform init -input=false'
+                    sh "docker exec -i -w /workspace/${env.PROJECT_DIR} terraform terraform init -input=false"
                 }
             }
         }
@@ -227,7 +228,7 @@ pipeline {
         stage('Terraform Validate') {
             steps {
                 dir(env.PROJECT_DIR) {
-                    sh 'docker exec -i -w /workspace/${PROJECT_DIR} terraform terraform validate'
+                    sh "docker exec -i -w /workspace/${env.PROJECT_DIR} terraform terraform validate"
                 }
             }
         }
@@ -235,7 +236,7 @@ pipeline {
         stage('Terraform Plan') {
             steps {
                 dir(env.PROJECT_DIR) {
-                    sh 'docker exec -i -w /workspace/${PROJECT_DIR} terraform terraform plan -out=tfplan -input=false'
+                    sh "docker exec -i -w /workspace/${env.PROJECT_DIR} terraform terraform plan -out=tfplan -input=false"
                 }
             }
         }
@@ -243,33 +244,34 @@ pipeline {
         stage('Checkov - Plan') {
             steps {
                 dir(env.PROJECT_DIR) {
-                    sh '''
-                        [ ! -f tfplan ] && { echo '{"summary":{"passed":0,"failed":0,"skipped":0,"parsing_errors":0,"resource_count":0},"results":{"passed_checks":[],"failed_checks":[],"skipped_checks":[],"parsing_errors":[]}}' > checkov-plan-results.json; exit 0; }
-                        docker exec -i -w /workspace/${PROJECT_DIR} terraform terraform show -json tfplan > tfplan.json
+                    sh """
+                        [ ! -f tfplan ] && { echo '{\"summary\":{\"passed\":0,\"failed\":0,\"skipped\":0,\"parsing_errors\":0,\"resource_count\":0},\"results\":{\"passed_checks\":[],\"failed_checks\":[],\"skipped_checks\":[],\"parsing_errors\":[]}}' > checkov-plan-results.json; exit 0; }
+                        docker exec -i -w /workspace/${env.PROJECT_DIR} terraform terraform show -json tfplan > tfplan.json
                         # Aggressive cleanup - remove file or directory
                         rm -rf checkov-plan-results.json checkov-plan-results.tmp 2>/dev/null || true
-                        CHECKOV_SKIP="--skip-check CKV_AWS_18 --skip-check CKV_AWS_19 --skip-check CKV_AWS_144"
-                        [ -f ../../.checkov.yaml ] && CHECKOV_CONFIG="--config-file ../../.checkov.yaml" || CHECKOV_CONFIG=""
+                        CHECKOV_SKIP=\"--skip-check CKV_AWS_18 --skip-check CKV_AWS_19 --skip-check CKV_AWS_144\"
+                        [ -f ../../.checkov.yaml ] && CHECKOV_CONFIG=\"--config-file ../../.checkov.yaml\" || CHECKOV_CONFIG=\"\"
                         # Run Checkov via Docker container and capture JSON output to temporary file first
-                        docker exec -i -w /workspace/${PROJECT_DIR} checkov checkov -f tfplan.json --framework terraform_plan $CHECKOV_CONFIG $CHECKOV_SKIP --output json --soft-fail > checkov-plan-results.tmp 2>/dev/null || true
+                        docker exec -i -w /workspace/${env.PROJECT_DIR} checkov checkov -f tfplan.json --framework terraform_plan \$CHECKOV_CONFIG \$CHECKOV_SKIP --output json --soft-fail > checkov-plan-results.tmp 2>/dev/null || true
                         # Move temp file to final location (ensures it's a file)
                         if [ -f checkov-plan-results.tmp ] && [ -s checkov-plan-results.tmp ]; then
                             mv checkov-plan-results.tmp checkov-plan-results.json
                         else
-                            echo '{"summary":{"passed":0,"failed":0,"skipped":0,"parsing_errors":0,"resource_count":0},"results":{"passed_checks":[],"failed_checks":[],"skipped_checks":[],"parsing_errors":[]}}' > checkov-plan-results.json
+                            echo '{\"summary\":{\"passed\":0,\"failed\":0,\"skipped\":0,\"parsing_errors\":0,\"resource_count\":0},\"results\":{\"passed_checks\":[],\"failed_checks\":[],\"skipped_checks\":[],\"parsing_errors\":[]}}' > checkov-plan-results.json
                         fi
                         # Final safety check - remove directory if it exists
-                        [ -d checkov-plan-results.json ] && rm -rf checkov-plan-results.json && echo '{"summary":{"passed":0,"failed":0,"skipped":0,"parsing_errors":0,"resource_count":0},"results":{"passed_checks":[],"failed_checks":[],"skipped_checks":[],"parsing_errors":[]}}' > checkov-plan-results.json || true
-                    '''
+                        [ -d checkov-plan-results.json ] && rm -rf checkov-plan-results.json && echo '{\"summary\":{\"passed\":0,\"failed\":0,\"skipped\":0,\"parsing_errors\":0,\"resource_count\":0},\"results\":{\"passed_checks\":[],\"failed_checks\":[],\"skipped_checks\":[],\"parsing_errors\":[]}}' > checkov-plan-results.json || true
+                    """
                 }
             }
             post {
                 always {
-                    sh '''
-                        cd '${env.PROJECT_DIR}'
-                        [ -d checkov-plan-results.json ] && rm -rf checkov-plan-results.json || true
-                        [ ! -f checkov-plan-results.json ] && echo "{}" > checkov-plan-results.json || true
-                    '''
+                    dir(env.PROJECT_DIR) {
+                        sh '''
+                            [ -d checkov-plan-results.json ] && rm -rf checkov-plan-results.json || true
+                            [ ! -f checkov-plan-results.json ] && echo "{}" > checkov-plan-results.json || true
+                        '''
+                    }
                     archiveArtifacts artifacts: "${env.PROJECT_DIR}/checkov-plan-results.json", allowEmptyArchive: true
                 }
             }
