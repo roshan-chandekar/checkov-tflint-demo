@@ -312,20 +312,47 @@ pipeline {
                         fi
                     fi
                     
-                    # Check if TFLint is found and executable
-                    if [ -n "$TFLINT_CMD" ] && [ -x "$TFLINT_CMD" ]; then
-                        echo "Running TFLint on modules using: $TFLINT_CMD"
-                        cd modules
-                        for module in */; do
-                            if [ -d "$module" ]; then
-                                echo "Linting module: $module"
-                                cd "$module"
-                                $TFLINT_CMD --init || true
-                                $TFLINT_CMD --format compact || true
-                                cd ..
+                        # Check if TFLint is found and executable
+                        if [ -n "$TFLINT_CMD" ] && [ -x "$TFLINT_CMD" ]; then
+                            echo "Running TFLint on modules using: $TFLINT_CMD"
+                            echo "TFLint version: $($TFLINT_CMD --version 2>/dev/null || echo 'unknown')"
+                            
+                            # Copy TFLint config to modules directory if it exists
+                            if [ -f ../.tflint.hcl ]; then
+                                cp ../.tflint.hcl modules/.tflint.hcl 2>/dev/null || true
                             fi
-                        done
-                        cd ..
+                            
+                            cd modules
+                            for module in */; do
+                                if [ -d "$module" ]; then
+                                    MODULE_NAME=$(basename "$module")
+                                    echo "Linting module: modules/$MODULE_NAME"
+                                    cd "$module"
+                                    # Copy TFLint config if available
+                                    if [ -f ../../.tflint.hcl ]; then
+                                        cp ../../.tflint.hcl .tflint.hcl 2>/dev/null || true
+                                    fi
+                                    # Initialize TFLint plugins
+                                    echo "Initializing TFLint for modules/$MODULE_NAME..."
+                                    $TFLINT_CMD --init 2>&1 | head -20 || echo "TFLint init completed (may have warnings)"
+                                    # Run TFLint with default format, show module context
+                                    echo "--- TFLint results for modules/$MODULE_NAME (showing full paths) ---"
+                                    echo "Scanning directory: modules/$MODULE_NAME/"
+                                    set +e
+                                    # Run TFLint and prefix file references with module path
+                                    $TFLINT_CMD 2>&1 | sed "s|^\([^/]*\.tf\)|modules/$MODULE_NAME/\1|" | sed "s|^\([0-9]*:\)|modules/$MODULE_NAME/\1|" || true
+                                    TFLINT_MODULE_EXIT=${PIPESTATUS[0]}
+                                    set -e
+                                    if [ $TFLINT_MODULE_EXIT -eq 0 ]; then
+                                        echo "✓ No issues found in modules/$MODULE_NAME"
+                                    else
+                                        echo "⚠ Issues found in modules/$MODULE_NAME (see above)"
+                                    fi
+                                    echo "--- End of TFLint results for modules/$MODULE_NAME ---"
+                                    cd ..
+                                fi
+                            done
+                            cd ..
                     else
                         echo "⚠ Warning: TFLint not found. Skipping module linting."
                         echo "TFLint may not have been installed correctly in the Setup Tools stage."
@@ -361,9 +388,88 @@ pipeline {
                         # Check if TFLint is found and executable
                         if [ -n "$TFLINT_CMD" ] && [ -x "$TFLINT_CMD" ]; then
                             echo "Running TFLint on ${PROJECT_DIR} using: $TFLINT_CMD"
-                            $TFLINT_CMD --init || true
-                            $TFLINT_CMD --format compact || true
-                            $TFLINT_CMD --format json > tflint-results.json || true
+                            echo "TFLint version: $($TFLINT_CMD --version 2>/dev/null || echo 'unknown')"
+                            
+                            # Copy TFLint config if it exists in root
+                            if [ -f ../../.tflint.hcl ]; then
+                                cp ../../.tflint.hcl .tflint.hcl 2>/dev/null || true
+                                echo "TFLint config file copied"
+                            fi
+                            
+                            # Initialize TFLint plugins
+                            echo "Initializing TFLint plugins..."
+                            $TFLINT_CMD --init 2>&1 | head -30 || echo "TFLint init completed (may have warnings)"
+                            
+                            # Get current directory path relative to workspace root
+                            CURRENT_DIR=$(pwd)
+                            WORKSPACE_ROOT=$(cd ../.. && pwd)
+                            RELATIVE_PATH=$(echo "$CURRENT_DIR" | sed "s|^$WORKSPACE_ROOT/||")
+                            
+                            # Run TFLint with default format (shows file names, line numbers, and issues)
+                            echo "--- TFLint output for ${RELATIVE_PATH} (shows full paths) ---"
+                            set +e
+                            # Prefix output with project path for clarity
+                            $TFLINT_CMD 2>&1 | sed "s|^|${RELATIVE_PATH}/|" | tee tflint-output.txt
+                            TFLINT_EXIT=${PIPESTATUS[0]}
+                            set -e
+                            
+                            if [ $TFLINT_EXIT -eq 0 ]; then
+                                echo "✓ No issues found in ${RELATIVE_PATH}"
+                            else
+                                echo "⚠ Issues found in ${RELATIVE_PATH} (see above for full paths and line numbers)"
+                            fi
+                            echo "--- End of TFLint output for ${RELATIVE_PATH} ---"
+                            
+                            # Run TFLint with JSON format for results file (includes file information)
+                            echo "Generating TFLint JSON results (includes full file paths)..."
+                            set +e
+                            $TFLINT_CMD --format json > tflint-results-temp.json 2>&1
+                            TFLINT_JSON_EXIT=$?
+                            set -e
+                            
+                            # Process JSON to add full paths
+                            if [ -f tflint-results-temp.json ] && [ -s tflint-results-temp.json ]; then
+                                # Use jq to add full path prefix to filenames if available
+                                if command -v jq &> /dev/null; then
+                                    cat tflint-results-temp.json | jq --arg prefix "$RELATIVE_PATH/" '.issues[] | .range.filename = ($prefix + .range.filename) | .' | jq -s '{issues: ., errors: []}' > tflint-results.json 2>/dev/null || cp tflint-results-temp.json tflint-results.json
+                                else
+                                    # Without jq, just copy the file (paths will be relative to current dir)
+                                    cp tflint-results-temp.json tflint-results.json
+                                fi
+                                rm -f tflint-results-temp.json
+                            else
+                                cp tflint-results-temp.json tflint-results.json 2>/dev/null || echo '{"issues":[],"errors":[]}' > tflint-results.json
+                                rm -f tflint-results-temp.json
+                            fi
+                            
+                            # Verify results file
+                            if [ -f tflint-results.json ]; then
+                                if [ -s tflint-results.json ]; then
+                                    echo "✓ TFLint results saved to tflint-results.json"
+                                    echo "Results preview (showing full file paths and issues):"
+                                    # Use jq if available to show full paths
+                                    if command -v jq &> /dev/null; then
+                                        # Extract and show full path information
+                                        echo "Issues found:"
+                                        cat tflint-results.json | jq -r '.issues[] | "\(.range.filename):\(.range.start.line):\(.range.start.column) - \(.rule.name): \(.message)"' 2>/dev/null | head -50 || cat tflint-results.json | head -50
+                                        echo ""
+                                        echo "Full JSON structure (first issue with complete path):"
+                                        cat tflint-results.json | jq '.issues[0] | {full_path: .range.filename, line: .range.start.line, column: .range.start.column, rule: .rule.name, message: .message}' 2>/dev/null || cat tflint-results.json | head -30
+                                    else
+                                        echo "Note: Install 'jq' for better JSON parsing. Showing raw JSON:"
+                                        cat tflint-results.json | head -50
+                                    fi
+                                else
+                                    echo "⚠ Warning: TFLint results file is empty"
+                                    echo "TFLint JSON exit code: $TFLINT_JSON_EXIT"
+                                    # Create a valid empty JSON structure
+                                    echo '{"issues":[],"errors":[]}' > tflint-results.json
+                                fi
+                            else
+                                echo "⚠ Warning: TFLint results file was not created"
+                                echo "TFLint JSON exit code: $TFLINT_JSON_EXIT"
+                                echo '{"issues":[],"errors":[]}' > tflint-results.json
+                            fi
                         else
                             echo "⚠ Warning: TFLint not found. Skipping project linting."
                             echo "TFLint may not have been installed correctly in the Setup Tools stage."
@@ -398,12 +504,48 @@ pipeline {
                     fi
                     
                     echo "Running Checkov on modules using: $CHECKOV_CMD"
+                    # Use config file if it exists
+                    CHECKOV_CONFIG=""
+                    if [ -f .checkov.yaml ]; then
+                        CHECKOV_CONFIG="--config-file .checkov.yaml"
+                        echo "Using Checkov config file: .checkov.yaml"
+                    fi
+                    
+                    # Run Checkov and capture both stdout and stderr
+                    set +e
                     $CHECKOV_CMD -d modules \
                         --framework terraform \
+                        $CHECKOV_CONFIG \
                         --output cli \
                         --output json \
                         --output-file-path checkov-modules-results.json \
-                        --soft-fail || true
+                        --soft-fail 2>&1 | tee checkov-modules-output.txt
+                    CHECKOV_EXIT=$?
+                    set -e
+                    
+                    # Show CLI output
+                    if [ -f checkov-modules-output.txt ]; then
+                        echo "--- Checkov CLI Output ---"
+                        cat checkov-modules-output.txt
+                        echo "--- End of CLI Output ---"
+                    fi
+                    
+                    # Verify results file was created and has content
+                    if [ -f checkov-modules-results.json ]; then
+                        if [ -s checkov-modules-results.json ]; then
+                            echo "✓ Checkov scan completed. Results saved to checkov-modules-results.json"
+                            echo "Results summary (first 30 lines):"
+                            cat checkov-modules-results.json | head -30 || true
+                        else
+                            echo "⚠ Warning: Checkov results file is empty"
+                            echo "Checkov exit code: $CHECKOV_EXIT"
+                            echo "This might mean no issues were found, or Checkov encountered an error"
+                        fi
+                    else
+                        echo "⚠ Warning: Checkov results file was not created"
+                        echo "Checkov exit code: $CHECKOV_EXIT"
+                        echo "{}" > checkov-modules-results.json
+                    fi
                 '''
             }
             post {
@@ -432,12 +574,48 @@ pipeline {
                         fi
                         
                         echo "Running Checkov on ${PROJECT_DIR} using: $CHECKOV_CMD"
+                        # Use config file if it exists
+                        CHECKOV_CONFIG=""
+                        if [ -f ../../.checkov.yaml ]; then
+                            CHECKOV_CONFIG="--config-file ../../.checkov.yaml"
+                            echo "Using Checkov config file: .checkov.yaml"
+                        fi
+                        
+                        # Run Checkov and capture both stdout and stderr
+                        set +e
                         $CHECKOV_CMD -d . \
                             --framework terraform \
+                            $CHECKOV_CONFIG \
                             --output cli \
                             --output json \
                             --output-file-path checkov-results.json \
-                            --soft-fail || true
+                            --soft-fail 2>&1 | tee checkov-output.txt
+                        CHECKOV_EXIT=$?
+                        set -e
+                        
+                        # Show CLI output
+                        if [ -f checkov-output.txt ]; then
+                            echo "--- Checkov CLI Output ---"
+                            cat checkov-output.txt
+                            echo "--- End of CLI Output ---"
+                        fi
+                        
+                        # Verify results file was created and has content
+                        if [ -f checkov-results.json ]; then
+                            if [ -s checkov-results.json ]; then
+                                echo "✓ Checkov scan completed. Results saved to checkov-results.json"
+                                echo "Results summary (first 30 lines):"
+                                cat checkov-results.json | head -30 || true
+                            else
+                                echo "⚠ Warning: Checkov results file is empty"
+                                echo "Checkov exit code: $CHECKOV_EXIT"
+                                echo "This might mean no issues were found, or Checkov encountered an error"
+                            fi
+                        else
+                            echo "⚠ Warning: Checkov results file was not created"
+                            echo "Checkov exit code: $CHECKOV_EXIT"
+                            echo "{}" > checkov-results.json
+                        fi
                     '''
                 }
             }
@@ -504,12 +682,33 @@ pipeline {
                         
                         echo "Running Checkov on Terraform plan using: $CHECKOV_CMD"
                         terraform show -json tfplan > tfplan.json
+                        
+                        # Run Checkov on plan
+                        set +e
                         $CHECKOV_CMD -f tfplan.json \
                             --framework terraform_plan \
                             --output cli \
                             --output json \
                             --output-file-path checkov-plan-results.json \
-                            --soft-fail || true
+                            --soft-fail 2>&1
+                        CHECKOV_EXIT=$?
+                        set -e
+                        
+                        # Verify results file
+                        if [ -f checkov-plan-results.json ]; then
+                            if [ -s checkov-plan-results.json ]; then
+                                echo "✓ Checkov plan scan completed. Results saved to checkov-plan-results.json"
+                                echo "Results summary:"
+                                cat checkov-plan-results.json | head -20 || true
+                            else
+                                echo "⚠ Warning: Checkov plan results file is empty"
+                                echo "Checkov exit code: $CHECKOV_EXIT"
+                            fi
+                        else
+                            echo "⚠ Warning: Checkov plan results file was not created"
+                            echo "Checkov exit code: $CHECKOV_EXIT"
+                            echo "{}" > checkov-plan-results.json
+                        fi
                     '''
                 }
             }

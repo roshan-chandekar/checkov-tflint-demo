@@ -25,3 +25,7 @@ check:
   CKV_AWS_19: SKIP  # S3 bucket encryption (we use KMS)
   CKV_AWS_144: SKIP # S3 cross-region replication (optional)
 
+# Ensure we scan all files
+no_guide: false
+show_progress_bar: false
+
