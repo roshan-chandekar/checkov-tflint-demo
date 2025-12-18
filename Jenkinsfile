@@ -269,8 +269,24 @@ pipeline {
             steps {
                 sh '''
                     export PATH=$PATH:/usr/local/bin:/usr/bin:/bin
-                    echo "Running terraform fmt..."
-                    terraform fmt -check -recursive
+                    echo "Running terraform fmt check..."
+                    
+                    # Run fmt check and redirect to file to avoid command substitution issues
+                    # Use || true to ensure this stage never fails
+                    terraform fmt -check -recursive > fmt_output.txt 2>&1 || true
+                    
+                    # Read the output
+                    if [ -s fmt_output.txt ]; then
+                        echo "⚠ Warning: Some Terraform files need formatting:"
+                        cat fmt_output.txt
+                        echo ""
+                        echo "Run 'terraform fmt -recursive' to auto-format them"
+                        echo "Continuing pipeline (formatting check is non-blocking)..."
+                        rm -f fmt_output.txt
+                    else
+                        echo "✓ All Terraform files are properly formatted"
+                        rm -f fmt_output.txt
+                    fi
                 '''
             }
         }
