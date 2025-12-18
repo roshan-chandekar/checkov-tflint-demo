@@ -335,12 +335,12 @@ pipeline {
                                     # Initialize TFLint plugins
                                     echo "Initializing TFLint for modules/$MODULE_NAME..."
                                     $TFLINT_CMD --init 2>&1 | head -20 || echo "TFLint init completed (may have warnings)"
-                                    # Run TFLint with default format, show module context
+                                    # Run TFLint with default format, show module path context
                                     echo "--- TFLint results for modules/$MODULE_NAME (showing full paths) ---"
                                     echo "Scanning directory: modules/$MODULE_NAME/"
                                     set +e
-                                    # Run TFLint and prefix file references with module path
-                                    $TFLINT_CMD 2>&1 | sed "s|^\([^/]*\.tf\)|modules/$MODULE_NAME/\1|" | sed "s|^\([0-9]*:\)|modules/$MODULE_NAME/\1|" || true
+                                    # Run TFLint - it will show relative paths, context is in the header above
+                                    $TFLINT_CMD 2>&1 || true
                                     TFLINT_MODULE_EXIT=${PIPESTATUS[0]}
                                     set -e
                                     if [ $TFLINT_MODULE_EXIT -eq 0 ]; then
@@ -407,10 +407,12 @@ pipeline {
                             
                             # Run TFLint with default format (shows file names, line numbers, and issues)
                             echo "--- TFLint output for ${RELATIVE_PATH} (shows full paths) ---"
+                            echo "Scanning directory: ${RELATIVE_PATH}/"
                             set +e
-                            # Prefix output with project path for clarity
-                            $TFLINT_CMD 2>&1 | sed "s|^|${RELATIVE_PATH}/|" | tee tflint-output.txt
-                            TFLINT_EXIT=${PIPESTATUS[0]}
+                            # Run TFLint - file paths will be relative to current directory
+                            # Context is shown in the header above
+                            $TFLINT_CMD 2>&1 | tee tflint-output.txt
+                            TFLINT_EXIT=$?
                             set -e
                             
                             if [ $TFLINT_EXIT -eq 0 ]; then
