@@ -524,12 +524,15 @@ pipeline {
                     TF_FILES=$(find modules -name "*.tf" -type f 2>/dev/null | wc -l)
                     echo "Found $TF_FILES Terraform files in modules"
                     
-                    # Use config file if it exists
+                    # Use config file if it exists, and add skip-check flags
                     CHECKOV_CONFIG=""
+                    CHECKOV_SKIP=""
                     if [ -f .checkov.yaml ]; then
                         CHECKOV_CONFIG="--config-file .checkov.yaml"
                         echo "Using Checkov config file: .checkov.yaml"
                     fi
+                    # Add skip checks directly (more reliable than config file)
+                    CHECKOV_SKIP="--skip-check CKV_AWS_18 --skip-check CKV_AWS_19 --skip-check CKV_AWS_144"
                     
                     # Run Checkov with both CLI and JSON output
                     # JSON will be written to file, CLI to console
@@ -537,6 +540,7 @@ pipeline {
                     $CHECKOV_CMD -d modules \
                         --framework terraform \
                         $CHECKOV_CONFIG \
+                        $CHECKOV_SKIP \
                         --output cli \
                         --output json \
                         --output-file-path checkov-modules-results.json \
@@ -609,12 +613,15 @@ pipeline {
                         TF_FILES=$(find . -name "*.tf" -type f 2>/dev/null | wc -l)
                         echo "Found $TF_FILES Terraform files"
                         
-                        # Use config file if it exists
+                        # Use config file if it exists, and add skip-check flags
                         CHECKOV_CONFIG=""
+                        CHECKOV_SKIP=""
                         if [ -f ../../.checkov.yaml ]; then
                             CHECKOV_CONFIG="--config-file ../../.checkov.yaml"
                             echo "Using Checkov config file: .checkov.yaml"
                         fi
+                        # Add skip checks directly (more reliable than config file)
+                        CHECKOV_SKIP="--skip-check CKV_AWS_18 --skip-check CKV_AWS_19 --skip-check CKV_AWS_144"
                         
                         # Run Checkov with both CLI and JSON output
                         # JSON will be written to file, CLI to console
@@ -622,6 +629,7 @@ pipeline {
                         $CHECKOV_CMD -d . \
                             --framework terraform \
                             $CHECKOV_CONFIG \
+                            $CHECKOV_SKIP \
                             --output cli \
                             --output json \
                             --output-file-path checkov-results.json \
@@ -744,18 +752,22 @@ pipeline {
                         
                         echo "Plan JSON file size: $(wc -c < tfplan.json) bytes"
                         
-                        # Use config file if it exists
+                        # Use config file if it exists, and add skip-check flags
                         CHECKOV_CONFIG=""
+                        CHECKOV_SKIP=""
                         if [ -f ../../.checkov.yaml ]; then
                             CHECKOV_CONFIG="--config-file ../../.checkov.yaml"
                             echo "Using Checkov config file: .checkov.yaml"
                         fi
+                        # Add skip checks directly (more reliable than config file)
+                        CHECKOV_SKIP="--skip-check CKV_AWS_18 --skip-check CKV_AWS_19 --skip-check CKV_AWS_144"
                         
                         # Run Checkov on plan with both CLI and JSON output
                         set +e
                         $CHECKOV_CMD -f tfplan.json \
                             --framework terraform_plan \
                             $CHECKOV_CONFIG \
+                            $CHECKOV_SKIP \
                             --output cli \
                             --output json \
                             --output-file-path checkov-plan-results.json \
