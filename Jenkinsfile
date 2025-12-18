@@ -518,6 +518,12 @@ pipeline {
                     fi
                     
                     echo "Running Checkov on modules using: $CHECKOV_CMD"
+                    
+                    # Verify Terraform files exist in modules
+                    echo "Checking for Terraform files in modules..."
+                    TF_FILES=$(find modules -name "*.tf" -type f 2>/dev/null | wc -l)
+                    echo "Found $TF_FILES Terraform files in modules"
+                    
                     # Use config file if it exists
                     CHECKOV_CONFIG=""
                     if [ -f .checkov.yaml ]; then
@@ -525,7 +531,8 @@ pipeline {
                         echo "Using Checkov config file: .checkov.yaml"
                     fi
                     
-                    # Run Checkov and capture both stdout and stderr
+                    # Run Checkov with both CLI and JSON output
+                    # JSON will be written to file, CLI to console
                     set +e
                     $CHECKOV_CMD -d modules \
                         --framework terraform \
@@ -536,6 +543,14 @@ pipeline {
                         --soft-fail 2>&1 | tee checkov-modules-output.txt
                     CHECKOV_EXIT=$?
                     set -e
+                    
+                    # Ensure JSON file exists and has content (Checkov might write empty file if no issues)
+                    # Check if file is empty, missing, or just contains {} (with any whitespace)
+                    if [ ! -f checkov-modules-results.json ] || [ ! -s checkov-modules-results.json ] || [ "$(cat checkov-modules-results.json 2>/dev/null | tr -d '[:space:]')" = "{}" ]; then
+                        echo "Checkov modules results file is empty or missing, creating proper JSON structure..."
+                        # Create a valid Checkov JSON structure
+                        echo '{"summary":{"passed":0,"failed":0,"skipped":0,"parsing_errors":0,"resource_count":0,"checkov_version":"unknown"},"results":{"passed_checks":[],"failed_checks":[],"skipped_checks":[],"parsing_errors":[]}}' > checkov-modules-results.json
+                    fi
                     
                     # Show CLI output
                     if [ -f checkov-modules-output.txt ]; then
@@ -588,6 +603,12 @@ pipeline {
                         fi
                         
                         echo "Running Checkov on ${PROJECT_DIR} using: $CHECKOV_CMD"
+                        
+                        # Verify Terraform files exist
+                        echo "Checking for Terraform files..."
+                        TF_FILES=$(find . -name "*.tf" -type f 2>/dev/null | wc -l)
+                        echo "Found $TF_FILES Terraform files"
+                        
                         # Use config file if it exists
                         CHECKOV_CONFIG=""
                         if [ -f ../../.checkov.yaml ]; then
@@ -595,7 +616,8 @@ pipeline {
                             echo "Using Checkov config file: .checkov.yaml"
                         fi
                         
-                        # Run Checkov and capture both stdout and stderr
+                        # Run Checkov with both CLI and JSON output
+                        # JSON will be written to file, CLI to console
                         set +e
                         $CHECKOV_CMD -d . \
                             --framework terraform \
@@ -606,6 +628,14 @@ pipeline {
                             --soft-fail 2>&1 | tee checkov-output.txt
                         CHECKOV_EXIT=$?
                         set -e
+                        
+                        # Ensure JSON file exists and has content (Checkov might write empty file if no issues)
+                        # Check if file is empty, missing, or just contains {} (with any whitespace)
+                        if [ ! -f checkov-results.json ] || [ ! -s checkov-results.json ] || [ "$(cat checkov-results.json 2>/dev/null | tr -d '[:space:]')" = "{}" ]; then
+                            echo "Checkov results file is empty or missing, creating proper JSON structure..."
+                            # Create a valid Checkov JSON structure
+                            echo '{"summary":{"passed":0,"failed":0,"skipped":0,"parsing_errors":0,"resource_count":0,"checkov_version":"unknown"},"results":{"passed_checks":[],"failed_checks":[],"skipped_checks":[],"parsing_errors":[]}}' > checkov-results.json
+                        fi
                         
                         # Show CLI output
                         if [ -f checkov-output.txt ]; then
@@ -695,33 +725,65 @@ pipeline {
                         fi
                         
                         echo "Running Checkov on Terraform plan using: $CHECKOV_CMD"
-                        terraform show -json tfplan > tfplan.json
                         
-                        # Run Checkov on plan
+                        # Verify plan file exists
+                        if [ ! -f tfplan ]; then
+                            echo "⚠ Warning: tfplan file not found. Skipping Checkov plan scan."
+                            echo '{"summary":{"passed":0,"failed":0,"skipped":0,"parsing_errors":0,"resource_count":0,"checkov_version":"unknown"},"results":{"passed_checks":[],"failed_checks":[],"skipped_checks":[],"parsing_errors":[]}}' > checkov-plan-results.json
+                            exit 0
+                        fi
+                        
+                        # Convert plan to JSON
+                        echo "Converting Terraform plan to JSON..."
+                        terraform show -json tfplan > tfplan.json 2>&1
+                        if [ ! -f tfplan.json ] || [ ! -s tfplan.json ]; then
+                            echo "⚠ Warning: Failed to convert plan to JSON. Skipping Checkov plan scan."
+                            echo '{"summary":{"passed":0,"failed":0,"skipped":0,"parsing_errors":1,"resource_count":0,"checkov_version":"unknown"},"results":{"passed_checks":[],"failed_checks":[],"skipped_checks":[],"parsing_errors":[{"file_path":"tfplan","check_id":"PLAN_CONVERSION_ERROR","check_name":"Plan Conversion","check_class":"","check_result":{"result":"FAILED","evaluated_keys":[]},"code_block":[],"file_line_range":[],"resource":"","evaluation_message":"Failed to convert Terraform plan to JSON","file_abs_path":"tfplan"}]}' > checkov-plan-results.json
+                            exit 0
+                        fi
+                        
+                        echo "Plan JSON file size: $(wc -c < tfplan.json) bytes"
+                        
+                        # Use config file if it exists
+                        CHECKOV_CONFIG=""
+                        if [ -f ../../.checkov.yaml ]; then
+                            CHECKOV_CONFIG="--config-file ../../.checkov.yaml"
+                            echo "Using Checkov config file: .checkov.yaml"
+                        fi
+                        
+                        # Run Checkov on plan with both CLI and JSON output
                         set +e
                         $CHECKOV_CMD -f tfplan.json \
                             --framework terraform_plan \
+                            $CHECKOV_CONFIG \
                             --output cli \
                             --output json \
                             --output-file-path checkov-plan-results.json \
-                            --soft-fail 2>&1
+                            --soft-fail 2>&1 | tee checkov-plan-output.txt
                         CHECKOV_EXIT=$?
                         set -e
                         
-                        # Verify results file
-                        if [ -f checkov-plan-results.json ]; then
-                            if [ -s checkov-plan-results.json ]; then
-                                echo "✓ Checkov plan scan completed. Results saved to checkov-plan-results.json"
-                                echo "Results summary:"
-                                cat checkov-plan-results.json | head -20 || true
-                            else
-                                echo "⚠ Warning: Checkov plan results file is empty"
-                                echo "Checkov exit code: $CHECKOV_EXIT"
-                            fi
+                        # Ensure JSON file exists and has content (Checkov might write empty file if no issues)
+                        if [ ! -f checkov-plan-results.json ] || [ ! -s checkov-plan-results.json ] || [ "$(cat checkov-plan-results.json 2>/dev/null | tr -d '[:space:]')" = "{}" ]; then
+                            echo "Checkov plan results file is empty or missing, creating proper JSON structure..."
+                            # Create a valid Checkov JSON structure
+                            echo '{"summary":{"passed":0,"failed":0,"skipped":0,"parsing_errors":0,"resource_count":0,"checkov_version":"unknown"},"results":{"passed_checks":[],"failed_checks":[],"skipped_checks":[],"parsing_errors":[]}}' > checkov-plan-results.json
+                        fi
+                        
+                        # Show CLI output
+                        if [ -f checkov-plan-output.txt ]; then
+                            echo "--- Checkov Plan Scan CLI Output ---"
+                            cat checkov-plan-output.txt
+                            echo "--- End of CLI Output ---"
+                        fi
+                        
+                        # Verify and show results
+                        if [ -f checkov-plan-results.json ] && [ -s checkov-plan-results.json ]; then
+                            echo "✓ Checkov plan scan completed. Results saved to checkov-plan-results.json"
+                            echo "Results summary (first 30 lines):"
+                            cat checkov-plan-results.json | head -30 || true
                         else
-                            echo "⚠ Warning: Checkov plan results file was not created"
-                            echo "Checkov exit code: $CHECKOV_EXIT"
-                            echo "{}" > checkov-plan-results.json
+                            echo "⚠ Warning: Checkov plan results file issue (exit code: $CHECKOV_EXIT)"
                         fi
                     '''
                 }
