@@ -102,7 +102,13 @@ pipeline {
             steps {
                 dir('scripts') {
                     sh '''
-                        command -v zip > /dev/null 2>&1 || { echo "ERROR: zip not found"; exit 1; }
+                        # Install zip if not available
+                        if ! command -v zip > /dev/null 2>&1; then
+                            echo "zip not found, installing..."
+                            apt-get update -qq > /dev/null 2>&1 && apt-get install -y -qq zip > /dev/null 2>&1 || \
+                            (which apk > /dev/null 2>&1 && apk add --no-cache zip > /dev/null 2>&1) || \
+                            { echo "ERROR: Could not install zip"; exit 1; }
+                        fi
                         chmod +x build_lambda.sh && ./build_lambda.sh
                     '''
                 }
