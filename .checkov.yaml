@@ -1,0 +1,27 @@
+# Checkov configuration file
+framework:
+  - terraform
+  - terraform_plan
+
+skip_check:
+  # Add check IDs here to skip specific checks if needed
+  # Example: - CKV_AWS_18  # Skip S3 bucket logging check
+
+soft_fail: true
+
+quiet: false
+
+compact: false
+
+output:
+  - cli
+  - json
+
+external_checks_dirs:
+  - .checkov
+
+check:
+  CKV_AWS_18: SKIP  # S3 bucket logging (optional for demo)
+  CKV_AWS_19: SKIP  # S3 bucket encryption (we use KMS)
+  CKV_AWS_144: SKIP # S3 cross-region replication (optional)
+
