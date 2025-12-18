@@ -340,8 +340,9 @@ pipeline {
                                     echo "Scanning directory: modules/$MODULE_NAME/"
                                     set +e
                                     # Run TFLint - it will show relative paths, context is in the header above
-                                    $TFLINT_CMD 2>&1 || true
-                                    TFLINT_MODULE_EXIT=${PIPESTATUS[0]}
+                                    # Capture exit code using POSIX-compatible method (PIPESTATUS is bash-specific)
+                                    $TFLINT_CMD 2>&1
+                                    TFLINT_MODULE_EXIT=$?
                                     set -e
                                     if [ $TFLINT_MODULE_EXIT -eq 0 ]; then
                                         echo "✓ No issues found in modules/$MODULE_NAME"

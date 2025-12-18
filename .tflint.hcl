@@ -62,10 +62,8 @@ rule "aws_resource_missing_tags" {
   tags = ["Project", "Environment", "ManagedBy"]
 }
 
-rule "aws_iam_policy_document_gov_friendly" {
-  enabled = true
-}
-
-# Note: aws_iam_policy_gov_friendly rule does not exist in tflint-ruleset-aws
-# Removed to prevent TFLint config errors
+# Note: The following AWS rules do not exist in tflint-ruleset-aws v0.31.0:
+# - aws_iam_policy_document_gov_friendly
+# - aws_iam_policy_gov_friendly
+# These have been removed to prevent TFLint config errors
 
