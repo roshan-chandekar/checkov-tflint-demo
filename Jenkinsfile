@@ -91,21 +91,28 @@ pipeline {
             steps {
                 sh '''
                     CHECKOV_CMD=$(cat .checkov_path 2>/dev/null || command -v checkov 2>/dev/null || find $HOME/.local/bin /usr/local/bin /usr/bin -name checkov 2>/dev/null | head -1)
-                    # Clean up any existing file or directory with this name
-                    [ -f checkov-modules-results.json ] && rm -f checkov-modules-results.json
-                    [ -d checkov-modules-results.json ] && rm -rf checkov-modules-results.json
+                    # Aggressive cleanup - remove file or directory
+                    rm -rf checkov-modules-results.json checkov-modules-results.tmp 2>/dev/null || true
                     CHECKOV_SKIP="--skip-check CKV_AWS_18 --skip-check CKV_AWS_19 --skip-check CKV_AWS_144"
                     [ -f .checkov.yaml ] && CHECKOV_CONFIG="--config-file .checkov.yaml" || CHECKOV_CONFIG=""
-                    # Run Checkov and redirect JSON output to file
-                    $CHECKOV_CMD -d modules --framework terraform $CHECKOV_CONFIG $CHECKOV_SKIP --output json --output-file-path checkov-modules-results.json --soft-fail 2>&1 || true
-                    # If file doesn't exist or is empty, create fallback
-                    if [ ! -f checkov-modules-results.json ] || [ ! -s checkov-modules-results.json ]; then
+                    # Run Checkov and capture JSON output to temporary file first (redirect stderr to avoid mixing)
+                    $CHECKOV_CMD -d modules --framework terraform $CHECKOV_CONFIG $CHECKOV_SKIP --output json --soft-fail > checkov-modules-results.tmp 2>/dev/null || true
+                    # Move temp file to final location (ensures it's a file)
+                    if [ -f checkov-modules-results.tmp ] && [ -s checkov-modules-results.tmp ]; then
+                        mv checkov-modules-results.tmp checkov-modules-results.json
+                    else
                         echo '{"summary":{"passed":0,"failed":0,"skipped":0,"parsing_errors":0,"resource_count":0},"results":{"passed_checks":[],"failed_checks":[],"skipped_checks":[],"parsing_errors":[]}}' > checkov-modules-results.json
                     fi
+                    # Final safety check - remove directory if it exists
+                    [ -d checkov-modules-results.json ] && rm -rf checkov-modules-results.json && echo '{"summary":{"passed":0,"failed":0,"skipped":0,"parsing_errors":0,"resource_count":0},"results":{"passed_checks":[],"failed_checks":[],"skipped_checks":[],"parsing_errors":[]}}' > checkov-modules-results.json || true
                 '''
             }
             post {
                 always {
+                    sh '''
+                        [ -d checkov-modules-results.json ] && rm -rf checkov-modules-results.json || true
+                        [ ! -f checkov-modules-results.json ] && echo "{}" > checkov-modules-results.json || true
+                    '''
                     archiveArtifacts artifacts: 'checkov-modules-results.json', allowEmptyArchive: true
                 }
             }
@@ -116,22 +123,30 @@ pipeline {
                 dir(env.PROJECT_DIR) {
                     sh '''
                         CHECKOV_CMD=$(cat ../.checkov_path 2>/dev/null || command -v checkov 2>/dev/null || find $HOME/.local/bin /usr/local/bin /usr/bin -name checkov 2>/dev/null | head -1)
-                        # Clean up any existing file or directory with this name
-                        [ -f checkov-results.json ] && rm -f checkov-results.json
-                        [ -d checkov-results.json ] && rm -rf checkov-results.json
+                        # Aggressive cleanup - remove file or directory
+                        rm -rf checkov-results.json checkov-results.tmp 2>/dev/null || true
                         CHECKOV_SKIP="--skip-check CKV_AWS_18 --skip-check CKV_AWS_19 --skip-check CKV_AWS_144"
                         [ -f ../../.checkov.yaml ] && CHECKOV_CONFIG="--config-file ../../.checkov.yaml" || CHECKOV_CONFIG=""
-                        # Run Checkov and redirect JSON output to file
-                        $CHECKOV_CMD -d . --framework terraform $CHECKOV_CONFIG $CHECKOV_SKIP --output json --output-file-path checkov-results.json --soft-fail 2>&1 || true
-                        # If file doesn't exist or is empty, create fallback
-                        if [ ! -f checkov-results.json ] || [ ! -s checkov-results.json ]; then
+                        # Run Checkov and capture JSON output to temporary file first (redirect stderr to avoid mixing)
+                        $CHECKOV_CMD -d . --framework terraform $CHECKOV_CONFIG $CHECKOV_SKIP --output json --soft-fail > checkov-results.tmp 2>/dev/null || true
+                        # Move temp file to final location (ensures it's a file)
+                        if [ -f checkov-results.tmp ] && [ -s checkov-results.tmp ]; then
+                            mv checkov-results.tmp checkov-results.json
+                        else
                             echo '{"summary":{"passed":0,"failed":0,"skipped":0,"parsing_errors":0,"resource_count":0},"results":{"passed_checks":[],"failed_checks":[],"skipped_checks":[],"parsing_errors":[]}}' > checkov-results.json
                         fi
+                        # Final safety check - remove directory if it exists
+                        [ -d checkov-results.json ] && rm -rf checkov-results.json && echo '{"summary":{"passed":0,"failed":0,"skipped":0,"parsing_errors":0,"resource_count":0},"results":{"passed_checks":[],"failed_checks":[],"skipped_checks":[],"parsing_errors":[]}}' > checkov-results.json || true
                     '''
                 }
             }
             post {
                 always {
+                    sh '''
+                        cd '${env.PROJECT_DIR}'
+                        [ -d checkov-results.json ] && rm -rf checkov-results.json || true
+                        [ ! -f checkov-results.json ] && echo "{}" > checkov-results.json || true
+                    '''
                     archiveArtifacts artifacts: "${env.PROJECT_DIR}/checkov-results.json", allowEmptyArchive: true
                 }
             }
@@ -168,22 +183,30 @@ pipeline {
                         [ ! -f tfplan ] && { echo '{"summary":{"passed":0,"failed":0,"skipped":0,"parsing_errors":0,"resource_count":0},"results":{"passed_checks":[],"failed_checks":[],"skipped_checks":[],"parsing_errors":[]}}' > checkov-plan-results.json; exit 0; }
                         terraform show -json tfplan > tfplan.json
                         CHECKOV_CMD=$(cat ../.checkov_path 2>/dev/null || command -v checkov 2>/dev/null || find $HOME/.local/bin /usr/local/bin /usr/bin -name checkov 2>/dev/null | head -1)
-                        # Clean up any existing file or directory with this name
-                        [ -f checkov-plan-results.json ] && rm -f checkov-plan-results.json
-                        [ -d checkov-plan-results.json ] && rm -rf checkov-plan-results.json
+                        # Aggressive cleanup - remove file or directory
+                        rm -rf checkov-plan-results.json checkov-plan-results.tmp 2>/dev/null || true
                         CHECKOV_SKIP="--skip-check CKV_AWS_18 --skip-check CKV_AWS_19 --skip-check CKV_AWS_144"
                         [ -f ../../.checkov.yaml ] && CHECKOV_CONFIG="--config-file ../../.checkov.yaml" || CHECKOV_CONFIG=""
-                        # Run Checkov and redirect JSON output to file
-                        $CHECKOV_CMD -f tfplan.json --framework terraform_plan $CHECKOV_CONFIG $CHECKOV_SKIP --output json --output-file-path checkov-plan-results.json --soft-fail 2>&1 || true
-                        # If file doesn't exist or is empty, create fallback
-                        if [ ! -f checkov-plan-results.json ] || [ ! -s checkov-plan-results.json ]; then
+                        # Run Checkov and capture JSON output to temporary file first (redirect stderr to avoid mixing)
+                        $CHECKOV_CMD -f tfplan.json --framework terraform_plan $CHECKOV_CONFIG $CHECKOV_SKIP --output json --soft-fail > checkov-plan-results.tmp 2>/dev/null || true
+                        # Move temp file to final location (ensures it's a file)
+                        if [ -f checkov-plan-results.tmp ] && [ -s checkov-plan-results.tmp ]; then
+                            mv checkov-plan-results.tmp checkov-plan-results.json
+                        else
                             echo '{"summary":{"passed":0,"failed":0,"skipped":0,"parsing_errors":0,"resource_count":0},"results":{"passed_checks":[],"failed_checks":[],"skipped_checks":[],"parsing_errors":[]}}' > checkov-plan-results.json
                         fi
+                        # Final safety check - remove directory if it exists
+                        [ -d checkov-plan-results.json ] && rm -rf checkov-plan-results.json && echo '{"summary":{"passed":0,"failed":0,"skipped":0,"parsing_errors":0,"resource_count":0},"results":{"passed_checks":[],"failed_checks":[],"skipped_checks":[],"parsing_errors":[]}}' > checkov-plan-results.json || true
                     '''
                 }
             }
             post {
                 always {
+                    sh '''
+                        cd '${env.PROJECT_DIR}'
+                        [ -d checkov-plan-results.json ] && rm -rf checkov-plan-results.json || true
+                        [ ! -f checkov-plan-results.json ] && echo "{}" > checkov-plan-results.json || true
+                    '''
                     archiveArtifacts artifacts: "${env.PROJECT_DIR}/checkov-plan-results.json", allowEmptyArchive: true
                 }
             }
