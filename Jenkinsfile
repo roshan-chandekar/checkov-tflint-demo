@@ -211,6 +211,73 @@ pipeline {
                 }
             }
         }
+
+        stage('SonarQube Scan') {
+            steps {
+                sh '''
+                    # Check if SonarQube scanner is available via Docker
+                    if command -v docker > /dev/null 2>&1 && docker ps | grep -q "sonar-scanner"; then
+                        echo "Using SonarQube scanner from Docker container"
+                        # Determine SonarQube URL based on environment
+                        if docker ps | grep -q "jenkins-docker"; then
+                            # Jenkins is in Docker, use container name
+                            SONAR_URL="http://sonarqube:9000"
+                        else
+                            # Jenkins is on host, use localhost
+                            SONAR_URL="http://localhost:9000"
+                        fi
+                        
+                        # Update sonar-project.properties with correct URL
+                        if [ -f sonar-project.properties ]; then
+                            sed -i.bak "s|sonar.host.url=.*|sonar.host.url=$SONAR_URL|" sonar-project.properties
+                        fi
+                        
+                        # Run SonarQube scanner via Docker container
+                        # Check if authentication token is provided
+                        if [ -n "$SONAR_TOKEN" ]; then
+                            docker exec -i -w /workspace sonar-scanner sonar-scanner \
+                                -Dsonar.host.url="$SONAR_URL" \
+                                -Dsonar.login="$SONAR_TOKEN" \
+                                -Dproject.settings=sonar-project.properties || echo "SonarQube scan completed with warnings"
+                        else
+                            echo "Warning: SONAR_TOKEN not set. Using default authentication (admin/admin)"
+                            echo "To use token authentication, set SONAR_TOKEN in Jenkins credentials"
+                            docker exec -i -w /workspace sonar-scanner sonar-scanner \
+                                -Dsonar.host.url="$SONAR_URL" \
+                                -Dproject.settings=sonar-project.properties || echo "SonarQube scan completed with warnings"
+                        fi
+                        
+                        # Restore original sonar-project.properties if backup exists
+                        [ -f sonar-project.properties.bak ] && mv sonar-project.properties.bak sonar-project.properties || true
+                    elif command -v sonar-scanner > /dev/null 2>&1; then
+                        echo "Using locally installed SonarQube scanner"
+                        # Use local sonar-scanner if available
+                        SONAR_URL="${SONAR_HOST_URL:-http://localhost:9000}"
+                        if [ -n "$SONAR_TOKEN" ]; then
+                            sonar-scanner \
+                                -Dsonar.host.url="$SONAR_URL" \
+                                -Dsonar.login="$SONAR_TOKEN" \
+                                -Dproject.settings=sonar-project.properties || echo "SonarQube scan completed with warnings"
+                        else
+                            sonar-scanner \
+                                -Dsonar.host.url="$SONAR_URL" \
+                                -Dproject.settings=sonar-project.properties || echo "SonarQube scan completed with warnings"
+                        fi
+                    else
+                        echo "WARNING: SonarQube scanner not found (neither Docker container nor local installation)"
+                        echo "Skipping SonarQube scan. To enable:"
+                        echo "  1. Start docker-compose: docker-compose up -d"
+                        echo "  2. Or install sonar-scanner locally"
+                        echo "  3. Ensure SonarQube server is running at http://localhost:9000"
+                    fi
+                '''
+            }
+            post {
+                always {
+                    echo "SonarQube scan stage completed. View results at: http://localhost:9000 (or your SonarQube URL)"
+                }
+            }
+        }
     }
 
     post {

@@ -105,6 +105,22 @@ services:
     command: ["tail -f /dev/null"]
     restart: unless-stopped
 
+  # SonarQube Scanner (can be used from Jenkins)
+  sonar-scanner:
+    image: sonarsource/sonar-scanner-cli:latest
+    container_name: sonar-scanner
+    volumes:
+      - ./:/workspace:rw
+      - sonar_scanner_cache:/root/.sonar
+    working_dir: /workspace
+    networks:
+      - sonarqube-network
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["tail -f /dev/null"]
+    restart: unless-stopped
+    depends_on:
+      - sonarqube
+
 volumes:
   sonarqube_db_data:
     driver: local
@@ -117,6 +133,8 @@ volumes:
   tflint_cache:
     driver: local
   checkov_cache:
+    driver: local
+  sonar_scanner_cache:
     driver: local
 
 networks:
