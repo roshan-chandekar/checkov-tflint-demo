@@ -91,10 +91,12 @@ pipeline {
             steps {
                 sh '''
                     CHECKOV_CMD=$(cat .checkov_path 2>/dev/null || command -v checkov 2>/dev/null || find $HOME/.local/bin /usr/local/bin /usr/bin -name checkov 2>/dev/null | head -1)
+                    rm -f checkov-modules-results.json
+                    rm -rf checkov-modules-results.json
                     CHECKOV_SKIP="--skip-check CKV_AWS_18 --skip-check CKV_AWS_19 --skip-check CKV_AWS_144"
                     [ -f .checkov.yaml ] && CHECKOV_CONFIG="--config-file .checkov.yaml" || CHECKOV_CONFIG=""
                     $CHECKOV_CMD -d modules --framework terraform $CHECKOV_CONFIG $CHECKOV_SKIP --output json --output-file-path checkov-modules-results.json --soft-fail || true
-                    [ ! -s checkov-modules-results.json ] && echo '{"summary":{"passed":0,"failed":0,"skipped":0,"parsing_errors":0,"resource_count":0},"results":{"passed_checks":[],"failed_checks":[],"skipped_checks":[],"parsing_errors":[]}}' > checkov-modules-results.json
+                    [ ! -f checkov-modules-results.json ] || [ ! -s checkov-modules-results.json ] && echo '{"summary":{"passed":0,"failed":0,"skipped":0,"parsing_errors":0,"resource_count":0},"results":{"passed_checks":[],"failed_checks":[],"skipped_checks":[],"parsing_errors":[]}}' > checkov-modules-results.json
                 '''
             }
             post {
@@ -109,10 +111,12 @@ pipeline {
                 dir(env.PROJECT_DIR) {
                     sh '''
                         CHECKOV_CMD=$(cat ../.checkov_path 2>/dev/null || command -v checkov 2>/dev/null || find $HOME/.local/bin /usr/local/bin /usr/bin -name checkov 2>/dev/null | head -1)
+                        rm -f checkov-results.json
+                        rm -rf checkov-results.json
                         CHECKOV_SKIP="--skip-check CKV_AWS_18 --skip-check CKV_AWS_19 --skip-check CKV_AWS_144"
                         [ -f ../../.checkov.yaml ] && CHECKOV_CONFIG="--config-file ../../.checkov.yaml" || CHECKOV_CONFIG=""
                         $CHECKOV_CMD -d . --framework terraform $CHECKOV_CONFIG $CHECKOV_SKIP --output json --output-file-path checkov-results.json --soft-fail || true
-                        [ ! -s checkov-results.json ] && echo '{"summary":{"passed":0,"failed":0,"skipped":0,"parsing_errors":0,"resource_count":0},"results":{"passed_checks":[],"failed_checks":[],"skipped_checks":[],"parsing_errors":[]}}' > checkov-results.json
+                        [ ! -f checkov-results.json ] || [ ! -s checkov-results.json ] && echo '{"summary":{"passed":0,"failed":0,"skipped":0,"parsing_errors":0,"resource_count":0},"results":{"passed_checks":[],"failed_checks":[],"skipped_checks":[],"parsing_errors":[]}}' > checkov-results.json
                     '''
                 }
             }
@@ -154,10 +158,12 @@ pipeline {
                         [ ! -f tfplan ] && { echo '{"summary":{"passed":0,"failed":0,"skipped":0,"parsing_errors":0,"resource_count":0},"results":{"passed_checks":[],"failed_checks":[],"skipped_checks":[],"parsing_errors":[]}}' > checkov-plan-results.json; exit 0; }
                         terraform show -json tfplan > tfplan.json
                         CHECKOV_CMD=$(cat ../.checkov_path 2>/dev/null || command -v checkov 2>/dev/null || find $HOME/.local/bin /usr/local/bin /usr/bin -name checkov 2>/dev/null | head -1)
+                        rm -f checkov-plan-results.json
+                        rm -rf checkov-plan-results.json
                         CHECKOV_SKIP="--skip-check CKV_AWS_18 --skip-check CKV_AWS_19 --skip-check CKV_AWS_144"
                         [ -f ../../.checkov.yaml ] && CHECKOV_CONFIG="--config-file ../../.checkov.yaml" || CHECKOV_CONFIG=""
                         $CHECKOV_CMD -f tfplan.json --framework terraform_plan $CHECKOV_CONFIG $CHECKOV_SKIP --output json --output-file-path checkov-plan-results.json --soft-fail || true
-                        [ ! -s checkov-plan-results.json ] && echo '{"summary":{"passed":0,"failed":0,"skipped":0,"parsing_errors":0,"resource_count":0},"results":{"passed_checks":[],"failed_checks":[],"skipped_checks":[],"parsing_errors":[]}}' > checkov-plan-results.json
+                        [ ! -f checkov-plan-results.json ] || [ ! -s checkov-plan-results.json ] && echo '{"summary":{"passed":0,"failed":0,"skipped":0,"parsing_errors":0,"resource_count":0},"results":{"passed_checks":[],"failed_checks":[],"skipped_checks":[],"parsing_errors":[]}}' > checkov-plan-results.json
                     '''
                 }
             }
