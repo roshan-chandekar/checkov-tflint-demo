@@ -47,12 +47,15 @@ pipeline {
                 script {
                     // Install Terraform
                     sh '''
-                        if ! command -v terraform &> /dev/null; then
+                        if command -v terraform &> /dev/null; then
+                            echo "Terraform already installed: $(terraform version | head -1)"
+                        else
                             echo "Installing Terraform..."
                             wget -q https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_amd64.zip
-                            unzip -q terraform_${TERRAFORM_VERSION}_linux_amd64.zip
-                            sudo mv terraform /usr/local/bin/
-                            rm terraform_${TERRAFORM_VERSION}_linux_amd64.zip
+                            unzip -o -q terraform_${TERRAFORM_VERSION}_linux_amd64.zip
+                            sudo mv terraform /usr/local/bin/ 2>/dev/null || mv terraform /usr/local/bin/
+                            rm -f terraform_${TERRAFORM_VERSION}_linux_amd64.zip
+                            echo "Terraform installed successfully"
                         fi
                         terraform version
                     '''
