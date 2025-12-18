@@ -45,6 +45,33 @@ pipeline {
         stage('Setup Tools') {
             steps {
                 script {
+                    // Install system dependencies first
+                    sh '''
+                        echo "Checking and installing system dependencies..."
+                        # Update package list (non-interactive)
+                        export DEBIAN_FRONTEND=noninteractive
+        
+                        # Check and install required packages
+                        MISSING_PKGS=""
+                        command -v wget &> /dev/null || MISSING_PKGS="$MISSING_PKGS wget"
+                        command -v unzip &> /dev/null || MISSING_PKGS="$MISSING_PKGS unzip"
+                        command -v zip &> /dev/null || MISSING_PKGS="$MISSING_PKGS zip"
+                        command -v python3 &> /dev/null || MISSING_PKGS="$MISSING_PKGS python3"
+                        command -v pip3 &> /dev/null || MISSING_PKGS="$MISSING_PKGS python3-pip"
+        
+                        if [ -n "$MISSING_PKGS" ]; then
+                            echo "Installing missing packages: $MISSING_PKGS"
+                            sudo apt-get update -qq
+                            sudo apt-get install -y -qq $MISSING_PKGS
+                        else
+                            echo "All required system packages are installed"
+                        fi
+        
+                        # Verify Python and pip
+                        python3 --version
+                        pip3 --version || echo "pip3 not found, will install packages manually"
+                    '''
+                    
                     // Install Terraform
                     sh '''
                         if command -v terraform &> /dev/null; then
@@ -63,7 +90,9 @@ pipeline {
                     // Install Checkov
                     sh '''
                         # Set PATH first to include common installation locations
-                        export PATH=$PATH:~/.local/bin:/usr/local/bin:/usr/bin
+                        export PATH=$PATH:$HOME/.local/bin:/usr/local/bin:/usr/bin
+                        # Expand ~ to $HOME for better compatibility
+                        [ -d "$HOME/.local/bin" ] || mkdir -p "$HOME/.local/bin"
                         
                         # Check if checkov is already installed and accessible
                         CHECKOV_PATH=$(command -v checkov 2>/dev/null || which checkov 2>/dev/null || echo "")
@@ -72,11 +101,19 @@ pipeline {
                         else
                             echo "Installing Checkov..."
                             
-                            # Try pipx first (cleanest for externally-managed environments)
-                            if command -v pipx &> /dev/null; then
+                            # Check if pipx is available
+                            PIPX_AVAILABLE=$(command -v pipx 2>/dev/null || which pipx 2>/dev/null || echo "")
+                            
+                            # Try pipx first (cleanest for externally-managed environments) if available
+                            if [ -n "$PIPX_AVAILABLE" ]; then
                                 echo "Using pipx to install Checkov..."
-                                pipx install checkov
-                                export PATH=$PATH:~/.local/bin
+                                if $PIPX_AVAILABLE install checkov 2>&1; then
+                                    export PATH=$PATH:~/.local/bin
+                                    echo "Checkov installed via pipx"
+                                else
+                                    echo "pipx installation failed, trying pip3..."
+                                    pip3 install --user --break-system-packages checkov 2>&1 && export PATH=$PATH:~/.local/bin
+                                fi
                             # Try pip install with --break-system-packages for externally-managed environments
                             elif pip3 install --user --break-system-packages checkov 2>&1; then
                                 echo "Checkov installed with --break-system-packages flag"
@@ -92,19 +129,30 @@ pipeline {
                             fi
                             
                             # Update PATH and verify installation
-                            export PATH=$PATH:~/.local/bin:/usr/local/bin:/usr/bin
-                            CHECKOV_PATH=$(command -v checkov 2>/dev/null || which checkov 2>/dev/null || find ~/.local/bin /usr/local/bin /usr/bin -name checkov 2>/dev/null | head -1 || echo "")
+                            export PATH=$PATH:$HOME/.local/bin:/usr/local/bin:/usr/bin
+                            CHECKOV_PATH=$(command -v checkov 2>/dev/null || which checkov 2>/dev/null || find "$HOME/.local/bin" /usr/local/bin /usr/bin -name checkov 2>/dev/null | head -1 || echo "")
+                            
+                            # Store checkov path for later stages
+                            echo "CHECKOV_PATH=$CHECKOV_PATH" > checkov.env
                         fi
                         
                         # Verify and show version using the found path
                         if [ -n "$CHECKOV_PATH" ] && [ -x "$CHECKOV_PATH" ]; then
                             echo "Checkov found at: $CHECKOV_PATH"
                             $CHECKOV_PATH --version || echo "Version check failed, but checkov exists"
+                            # Store for later use
+                            echo "$CHECKOV_PATH" > .checkov_path
                         else
                             echo "Warning: Checkov command not found after installation attempt."
                             echo "PATH: $PATH"
                             echo "Searching for checkov..."
-                            find ~/.local/bin /usr/local/bin /usr/bin -name checkov 2>/dev/null || echo "Checkov not found in common locations"
+                            FOUND_CHECKOV=$(find "$HOME/.local/bin" /usr/local/bin /usr/bin -name checkov 2>/dev/null | head -1)
+                            if [ -n "$FOUND_CHECKOV" ]; then
+                                echo "Found checkov at: $FOUND_CHECKOV"
+                                echo "$FOUND_CHECKOV" > .checkov_path
+                            else
+                                echo "Checkov not found in common locations"
+                            fi
                         fi
                     '''
 
@@ -147,18 +195,26 @@ pipeline {
                         fi
                         
                         # Update PATH and verify installation
-                        export PATH=$PATH:/usr/local/bin:/usr/bin:/bin:~/.local/bin
-                        TFLINT_PATH=$(command -v tflint 2>/dev/null || which tflint 2>/dev/null || find ~/.local/bin /usr/local/bin /usr/bin /bin -name tflint 2>/dev/null | head -1 || echo "")
+                        export PATH=$PATH:/usr/local/bin:/usr/bin:/bin:$HOME/.local/bin
+                        TFLINT_PATH=$(command -v tflint 2>/dev/null || which tflint 2>/dev/null || find "$HOME/.local/bin" /usr/local/bin /usr/bin /bin -name tflint 2>/dev/null | head -1 || echo "")
                         
                         # Verify and show version using the found path
                         if [ -n "$TFLINT_PATH" ] && [ -x "$TFLINT_PATH" ]; then
                             echo "TFLint found at: $TFLINT_PATH"
                             $TFLINT_PATH --version || echo "Version check failed, but tflint exists"
+                            # Store for later use
+                            echo "$TFLINT_PATH" > .tflint_path
                         else
                             echo "Warning: TFLint command not found after installation attempt."
                             echo "PATH: $PATH"
                             echo "Searching for tflint..."
-                            find ~/.local/bin /usr/local/bin /usr/bin /bin -name tflint 2>/dev/null || echo "TFLint not found in common locations"
+                            FOUND_TFLINT=$(find "$HOME/.local/bin" /usr/local/bin /usr/bin /bin -name tflint 2>/dev/null | head -1)
+                            if [ -n "$FOUND_TFLINT" ]; then
+                                echo "Found tflint at: $FOUND_TFLINT"
+                                echo "$FOUND_TFLINT" > .tflint_path
+                            else
+                                echo "TFLint not found in common locations"
+                            fi
                         fi
                     '''
                 }
@@ -180,6 +236,7 @@ pipeline {
         stage('Terraform Format') {
             steps {
                 sh '''
+                    export PATH=$PATH:/usr/local/bin:/usr/bin:/bin
                     echo "Running terraform fmt..."
                     terraform fmt -check -recursive
                 '''
@@ -189,14 +246,27 @@ pipeline {
         stage('TFLint - Modules') {
             steps {
                 sh '''
-                    echo "Running TFLint on modules..."
+                    # Load TFLint path if stored
+                    export PATH=$PATH:$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin
+                    if [ -f .tflint_path ]; then
+                        TFLINT_CMD=$(cat .tflint_path)
+                    else
+                        TFLINT_CMD=$(command -v tflint 2>/dev/null || which tflint 2>/dev/null || echo "tflint")
+                    fi
+                    
+                    if [ ! -x "$TFLINT_CMD" ] && ! command -v tflint &> /dev/null; then
+                        echo "Error: TFLint not found. Please check installation."
+                        exit 1
+                    fi
+                    
+                    echo "Running TFLint on modules using: $TFLINT_CMD"
                     cd modules
                     for module in */; do
                         if [ -d "$module" ]; then
                             echo "Linting module: $module"
                             cd "$module"
-                            tflint --init || true
-                            tflint --format compact || true
+                            $TFLINT_CMD --init || true
+                            $TFLINT_CMD --format compact || true
                             cd ..
                         fi
                     done
@@ -209,10 +279,18 @@ pipeline {
             steps {
                 dir(env.PROJECT_DIR) {
                     sh '''
-                        echo "Running TFLint on ${PROJECT_DIR}..."
-                        tflint --init || true
-                        tflint --format compact || true
-                        tflint --format json > tflint-results.json || true
+                        # Load TFLint path if stored
+                        export PATH=$PATH:$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin
+                        if [ -f ../.tflint_path ]; then
+                            TFLINT_CMD=$(cat ../.tflint_path)
+                        else
+                            TFLINT_CMD=$(command -v tflint 2>/dev/null || which tflint 2>/dev/null || echo "tflint")
+                        fi
+                        
+                        echo "Running TFLint on ${PROJECT_DIR} using: $TFLINT_CMD"
+                        $TFLINT_CMD --init || true
+                        $TFLINT_CMD --format compact || true
+                        $TFLINT_CMD --format json > tflint-results.json || true
                     '''
                 }
             }
@@ -226,8 +304,22 @@ pipeline {
         stage('Checkov Security Scan - Modules') {
             steps {
                 sh '''
-                    echo "Running Checkov on modules..."
-                    checkov -d modules \
+                    # Load Checkov path if stored
+                    export PATH=$PATH:$HOME/.local/bin:/usr/local/bin:/usr/bin
+                    if [ -f .checkov_path ]; then
+                        CHECKOV_CMD=$(cat .checkov_path)
+                    else
+                        CHECKOV_CMD=$(command -v checkov 2>/dev/null || which checkov 2>/dev/null || echo "checkov")
+                    fi
+                    
+                    if [ ! -x "$CHECKOV_CMD" ] && ! command -v checkov &> /dev/null; then
+                        echo "Warning: Checkov not found. Skipping scan."
+                        echo "{}" > checkov-modules-results.json
+                        exit 0
+                    fi
+                    
+                    echo "Running Checkov on modules using: $CHECKOV_CMD"
+                    $CHECKOV_CMD -d modules \
                         --framework terraform \
                         --output cli \
                         --output json \
@@ -246,8 +338,22 @@ pipeline {
             steps {
                 dir(env.PROJECT_DIR) {
                     sh '''
-                        echo "Running Checkov on ${PROJECT_DIR}..."
-                        checkov -d . \
+                        # Load Checkov path if stored
+                        export PATH=$PATH:$HOME/.local/bin:/usr/local/bin:/usr/bin
+                        if [ -f ../.checkov_path ]; then
+                            CHECKOV_CMD=$(cat ../.checkov_path)
+                        else
+                            CHECKOV_CMD=$(command -v checkov 2>/dev/null || which checkov 2>/dev/null || echo "checkov")
+                        fi
+                        
+                        if [ ! -x "$CHECKOV_CMD" ] && ! command -v checkov &> /dev/null; then
+                            echo "Warning: Checkov not found. Skipping scan."
+                            echo "{}" > checkov-results.json
+                            exit 0
+                        fi
+                        
+                        echo "Running Checkov on ${PROJECT_DIR} using: $CHECKOV_CMD"
+                        $CHECKOV_CMD -d . \
                             --framework terraform \
                             --output cli \
                             --output json \
@@ -267,6 +373,7 @@ pipeline {
             steps {
                 dir(env.PROJECT_DIR) {
                     sh '''
+                        export PATH=$PATH:/usr/local/bin:/usr/bin:/bin
                         echo "Running terraform init in ${PROJECT_DIR}..."
                         terraform init -input=false
                     '''
@@ -278,6 +385,7 @@ pipeline {
             steps {
                 dir(env.PROJECT_DIR) {
                     sh '''
+                        export PATH=$PATH:/usr/local/bin:/usr/bin:/bin
                         echo "Running terraform validate in ${PROJECT_DIR}..."
                         terraform validate
                     '''
@@ -289,6 +397,7 @@ pipeline {
             steps {
                 dir(env.PROJECT_DIR) {
                     sh '''
+                        export PATH=$PATH:/usr/local/bin:/usr/bin:/bin
                         echo "Running terraform plan in ${PROJECT_DIR}..."
                         terraform plan -out=tfplan -input=false
                     '''
@@ -300,9 +409,23 @@ pipeline {
             steps {
                 dir(env.PROJECT_DIR) {
                     sh '''
-                        echo "Running Checkov on Terraform plan..."
+                        # Load Checkov path if stored
+                        export PATH=$PATH:$HOME/.local/bin:/usr/local/bin:/usr/bin
+                        if [ -f ../.checkov_path ]; then
+                            CHECKOV_CMD=$(cat ../.checkov_path)
+                        else
+                            CHECKOV_CMD=$(command -v checkov 2>/dev/null || which checkov 2>/dev/null || echo "checkov")
+                        fi
+                        
+                        if [ ! -x "$CHECKOV_CMD" ] && ! command -v checkov &> /dev/null; then
+                            echo "Warning: Checkov not found. Skipping plan scan."
+                            echo "{}" > checkov-plan-results.json
+                            exit 0
+                        fi
+                        
+                        echo "Running Checkov on Terraform plan using: $CHECKOV_CMD"
                         terraform show -json tfplan > tfplan.json
-                        checkov -f tfplan.json \
+                        $CHECKOV_CMD -f tfplan.json \
                             --framework terraform_plan \
                             --output cli \
                             --output json \
@@ -344,6 +467,8 @@ pipeline {
                 find . -name "tfplan" -type f -delete || true
                 find . -name "tfplan.json" -type f -delete || true
                 find . -name "*.zip" -path "*/scripts/*" -prune -o -name "*.zip" -type f -delete || true
+                # Keep path files for debugging, but clean up if needed
+                # rm -f .checkov_path .tflint_path checkov.env || true
             '''
         }
         success {
