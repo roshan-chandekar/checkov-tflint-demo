@@ -558,9 +558,9 @@ pipeline {
                         # Try to extract actual Checkov version and results from CLI output if available
                         CHECKOV_VERSION="unknown"
                         if [ -f checkov-modules-output.txt ]; then
-                            # Extract version using simple grep and cut to avoid Groovy parsing issues
-                            # Look for version pattern like "2.x.x" or "3.x.x" after "version" or "v"
-                            CHECKOV_VERSION=$(grep -iE "(checkov|version)" checkov-modules-output.txt | head -1 | grep -oE "[0-9]+\.[0-9]+(\.[0-9]+)?" | head -1 || echo "unknown")
+                            # Extract version using simple pattern matching - no regex to avoid Groovy parsing
+                            # Just look for numbers with dots in the output
+                            CHECKOV_VERSION=$(grep -i "checkov" checkov-modules-output.txt | head -1 | tr ' ' '\n' | grep -E "^[0-9]" | grep "\." | head -1 || echo "unknown")
                         fi
                         echo "{\"summary\":{\"passed\":0,\"failed\":0,\"skipped\":0,\"parsing_errors\":0,\"resource_count\":0,\"checkov_version\":\"$CHECKOV_VERSION\"},\"results\":{\"passed_checks\":[],\"failed_checks\":[],\"skipped_checks\":[],\"parsing_errors\":[]}}" > checkov-modules-results.json
                     else
@@ -662,9 +662,9 @@ pipeline {
                             # Try to extract actual Checkov version and results from CLI output if available
                             CHECKOV_VERSION="unknown"
                             if [ -f checkov-output.txt ]; then
-                                # Extract version using simple grep to avoid Groovy parsing issues
-                                # Look for version pattern like "2.x.x" or "3.x.x" after "version" or "v"
-                                CHECKOV_VERSION=$(grep -iE "(checkov|version)" checkov-output.txt | head -1 | grep -oE "[0-9]+\.[0-9]+(\.[0-9]+)?" | head -1 || echo "unknown")
+                                # Extract version using simple pattern matching - no regex to avoid Groovy parsing
+                                # Just look for numbers with dots in the output
+                                CHECKOV_VERSION=$(grep -i "checkov" checkov-output.txt | head -1 | tr ' ' '\n' | grep -E "^[0-9]" | grep "\." | head -1 || echo "unknown")
                             fi
                             echo "{\"summary\":{\"passed\":0,\"failed\":0,\"skipped\":0,\"parsing_errors\":0,\"resource_count\":0,\"checkov_version\":\"$CHECKOV_VERSION\"},\"results\":{\"passed_checks\":[],\"failed_checks\":[],\"skipped_checks\":[],\"parsing_errors\":[]}}" > checkov-results.json
                         else
