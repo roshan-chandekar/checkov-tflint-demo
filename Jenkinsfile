@@ -403,8 +403,13 @@ pipeline {
                             # Get current directory path relative to workspace root
                             CURRENT_DIR=$(pwd)
                             WORKSPACE_ROOT=$(cd ../.. && pwd)
-                            # Use parameter expansion instead of sed to avoid Groovy parsing issues
-                            RELATIVE_PATH=${CURRENT_DIR#$WORKSPACE_ROOT/}
+                            # Calculate relative path using awk (works in all POSIX shells)
+                            # Remove workspace root prefix from current directory path
+                            RELATIVE_PATH=$(echo "$CURRENT_DIR" | awk -v root="$WORKSPACE_ROOT/" '{if (index($0, root) == 1) {sub(root, "", $0); print} else {print $0}}')
+                            # Fallback: if awk fails or path unchanged, use python for path manipulation
+                            if [ "$RELATIVE_PATH" = "$CURRENT_DIR" ] && command -v python3 &> /dev/null; then
+                                RELATIVE_PATH=$(python3 -c "import os; cwd='$CURRENT_DIR'; root='$WORKSPACE_ROOT'; print(os.path.relpath(cwd, root) if cwd.startswith(root) else cwd)")
+                            fi
                             
                             # Run TFLint with default format (shows file names, line numbers, and issues)
                             echo "--- TFLint output for ${RELATIVE_PATH} (shows full paths) ---"
