@@ -18,12 +18,12 @@ pipeline {
     }
 
     parameters {
-        choice(name: 'PROJECT', choices: ['dev', 'staging', 'prod'], description: 'Select project')
+        choice(name: 'PROJECT', choices: ['dev'], description: 'Select project')
     }
 
     environment {
         AWS_REGION = 'us-east-1'
-        PROJECT_DIR = "projects/${params.PROJECT}"
+        PROJECT_DIR = "projects/dev"
     }
 
     stages {
