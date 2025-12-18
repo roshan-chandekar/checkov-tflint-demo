@@ -53,11 +53,11 @@ pipeline {
         
                         # Check and install required packages
                         MISSING_PKGS=""
-                        command -v wget &> /dev/null || MISSING_PKGS="$MISSING_PKGS wget"
-                        command -v unzip &> /dev/null || MISSING_PKGS="$MISSING_PKGS unzip"
-                        command -v zip &> /dev/null || MISSING_PKGS="$MISSING_PKGS zip"
-                        command -v python3 &> /dev/null || MISSING_PKGS="$MISSING_PKGS python3"
-                        command -v pip3 &> /dev/null || MISSING_PKGS="$MISSING_PKGS python3-pip"
+                        command -v wget > /dev/null 2>&1 || MISSING_PKGS="$MISSING_PKGS wget"
+                        command -v unzip > /dev/null 2>&1 || MISSING_PKGS="$MISSING_PKGS unzip"
+                        command -v zip > /dev/null 2>&1 || MISSING_PKGS="$MISSING_PKGS zip"
+                        command -v python3 > /dev/null 2>&1 || MISSING_PKGS="$MISSING_PKGS python3"
+                        command -v pip3 > /dev/null 2>&1 || MISSING_PKGS="$MISSING_PKGS python3-pip"
         
                         if [ -n "$MISSING_PKGS" ]; then
                             echo "Installing missing packages: $MISSING_PKGS"
@@ -74,11 +74,11 @@ pipeline {
         
                         # Verify all tools are available
                         echo "Verifying installed tools:"
-                        command -v wget &> /dev/null && echo "✓ wget" || echo "✗ wget not found"
-                        command -v unzip &> /dev/null && echo "✓ unzip" || echo "✗ unzip not found"
-                        command -v zip &> /dev/null && echo "✓ zip" || echo "✗ zip not found"
-                        command -v python3 &> /dev/null && echo "✓ python3" || echo "✗ python3 not found"
-                        command -v pip3 &> /dev/null && echo "✓ pip3" || echo "✗ pip3 not found"
+                        command -v wget > /dev/null 2>&1 && echo "✓ wget" || echo "✗ wget not found"
+                        command -v unzip > /dev/null 2>&1 && echo "✓ unzip" || echo "✗ unzip not found"
+                        command -v zip > /dev/null 2>&1 && echo "✓ zip" || echo "✗ zip not found"
+                        command -v python3 > /dev/null 2>&1 && echo "✓ python3" || echo "✗ python3 not found"
+                        command -v pip3 > /dev/null 2>&1 && echo "✓ pip3" || echo "✗ pip3 not found"
                         
                         # Verify Python and pip
                         python3 --version || echo "python3 version check failed"
@@ -87,7 +87,7 @@ pipeline {
                     
                     // Install Terraform
                     sh '''
-                        if command -v terraform &> /dev/null; then
+                        if command -v terraform > /dev/null 2>&1; then
                             echo "Terraform already installed: $(terraform version | head -1)"
                         else
                             echo "Installing Terraform..."
@@ -240,7 +240,7 @@ pipeline {
                     sh '''
                         # Ensure zip is available
                         export PATH=$PATH:/usr/bin:/bin
-                        if ! command -v zip &> /dev/null; then
+                        if ! command -v zip > /dev/null 2>&1; then
                             echo "zip command not found. Installing..."
                             export DEBIAN_FRONTEND=noninteractive
                             sudo apt-get update -qq
@@ -250,7 +250,7 @@ pipeline {
                         fi
                         
                         # Verify zip is now available
-                        if command -v zip &> /dev/null; then
+                        if command -v zip > /dev/null 2>&1; then
                             echo "zip command found: $(which zip)"
                             zip --version | head -1
                         else
@@ -407,8 +407,8 @@ pipeline {
                             # Remove workspace root prefix from current directory path
                             RELATIVE_PATH=$(echo "$CURRENT_DIR" | awk -v root="$WORKSPACE_ROOT/" '{if (index($0, root) == 1) {sub(root, "", $0); print} else {print $0}}')
                             # Fallback: if awk fails or path unchanged, use python for path manipulation
-                            if [ "$RELATIVE_PATH" = "$CURRENT_DIR" ] && command -v python3 &> /dev/null; then
-                                RELATIVE_PATH=$(python3 -c "import os; cwd='$CURRENT_DIR'; root='$WORKSPACE_ROOT'; print(os.path.relpath(cwd, root) if cwd.startswith(root) else cwd)")
+                            if [ "$RELATIVE_PATH" = "$CURRENT_DIR" ] && command -v python3 > /dev/null 2>&1; then
+                                RELATIVE_PATH=$(python3 -c "import os; import sys; cwd=sys.argv[1]; root=sys.argv[2]; print(os.path.relpath(cwd, root) if cwd.startswith(root) else cwd)" "$CURRENT_DIR" "$WORKSPACE_ROOT")
                             fi
                             
                             # Run TFLint with default format (shows file names, line numbers, and issues)
@@ -438,7 +438,7 @@ pipeline {
                             # Process JSON to add full paths
                             if [ -f tflint-results-temp.json ] && [ -s tflint-results-temp.json ]; then
                                 # Use jq to add full path prefix to filenames if available
-                                if command -v jq &> /dev/null; then
+                                if command -v jq > /dev/null 2>&1; then
                                     cat tflint-results-temp.json | jq --arg prefix "$RELATIVE_PATH/" '.issues[] | .range.filename = ($prefix + .range.filename) | .' | jq -s '{issues: ., errors: []}' > tflint-results.json 2>/dev/null || cp tflint-results-temp.json tflint-results.json
                                 else
                                     # Without jq, just copy the file (paths will be relative to current dir)
@@ -456,7 +456,7 @@ pipeline {
                                     echo "✓ TFLint results saved to tflint-results.json"
                                     echo "Results preview (showing full file paths and issues):"
                                     # Use jq if available to show full paths
-                                    if command -v jq &> /dev/null; then
+                                    if command -v jq > /dev/null 2>&1; then
                                         # Extract and show full path information
                                         echo "Issues found:"
                                         # Use simpler jq commands to avoid Groovy parsing issues with backslashes
@@ -510,7 +510,7 @@ pipeline {
                         CHECKOV_CMD=$(command -v checkov 2>/dev/null || which checkov 2>/dev/null || echo "checkov")
                     fi
                     
-                    if [ ! -x "$CHECKOV_CMD" ] && ! command -v checkov &> /dev/null; then
+                    if [ ! -x "$CHECKOV_CMD" ] && ! command -v checkov > /dev/null 2>&1; then
                         echo "Warning: Checkov not found. Skipping scan."
                         echo "{}" > checkov-modules-results.json
                         exit 0
@@ -580,7 +580,7 @@ pipeline {
                             CHECKOV_CMD=$(command -v checkov 2>/dev/null || which checkov 2>/dev/null || echo "checkov")
                         fi
                         
-                        if [ ! -x "$CHECKOV_CMD" ] && ! command -v checkov &> /dev/null; then
+                        if [ ! -x "$CHECKOV_CMD" ] && ! command -v checkov > /dev/null 2>&1; then
                             echo "Warning: Checkov not found. Skipping scan."
                             echo "{}" > checkov-results.json
                             exit 0
@@ -687,7 +687,7 @@ pipeline {
                             CHECKOV_CMD=$(command -v checkov 2>/dev/null || which checkov 2>/dev/null || echo "checkov")
                         fi
                         
-                        if [ ! -x "$CHECKOV_CMD" ] && ! command -v checkov &> /dev/null; then
+                        if [ ! -x "$CHECKOV_CMD" ] && ! command -v checkov > /dev/null 2>&1; then
                             echo "Warning: Checkov not found. Skipping plan scan."
                             echo "{}" > checkov-plan-results.json
                             exit 0

@@ -66,7 +66,6 @@ rule "aws_iam_policy_document_gov_friendly" {
   enabled = true
 }
 
-rule "aws_iam_policy_gov_friendly" {
-  enabled = true
-}
+# Note: aws_iam_policy_gov_friendly rule does not exist in tflint-ruleset-aws
+# Removed to prevent TFLint config errors
 
