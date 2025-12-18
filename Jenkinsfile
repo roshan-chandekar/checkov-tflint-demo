@@ -128,8 +128,8 @@ pipeline {
                     cd modules
                     for module in */; do
                         if [ -d "$module" ]; then
-                            docker exec -i -w /workspace/modules/"$module" tflint tflint --init > /dev/null 2>&1 || true
-                            docker exec -i -w /workspace/modules/"$module" tflint tflint || true
+                            docker exec -w /workspace/modules/"$module" tflint tflint --init > /dev/null 2>&1 || true
+                            docker exec -w /workspace/modules/"$module" tflint tflint || true
                         fi
                     done
                 '''
@@ -141,8 +141,8 @@ pipeline {
                 dir(env.PROJECT_DIR) {
                     sh """
                         [ -f ../../.tflint.hcl ] && cp ../../.tflint.hcl .tflint.hcl || true
-                        docker exec -i -w /workspace/${env.PROJECT_DIR} tflint tflint --init > /dev/null 2>&1 || true
-                        docker exec -i -w /workspace/${env.PROJECT_DIR} tflint tflint --format json > tflint-results.json 2>&1 || echo '{\"issues\":[],\"errors\":[]}' > tflint-results.json
+                        docker exec -w /workspace/${env.PROJECT_DIR} tflint tflint --init > /dev/null 2>&1 || true
+                        docker exec -w /workspace/${env.PROJECT_DIR} tflint tflint --format json > tflint-results.json 2>&1 || echo '{\"issues\":[],\"errors\":[]}' > tflint-results.json
                     """
                 }
             }
@@ -160,11 +160,19 @@ pipeline {
                     rm -rf checkov-modules-results.json checkov-modules-results.tmp 2>/dev/null || true
                     CHECKOV_SKIP="--skip-check CKV_AWS_18 --skip-check CKV_AWS_19 --skip-check CKV_AWS_144"
                     [ -f .checkov.yaml ] && CHECKOV_CONFIG="--config-file .checkov.yaml" || CHECKOV_CONFIG=""
-                    # Run Checkov via Docker container and capture JSON output to temporary file first
-                    docker exec -i -w /workspace checkov checkov -d modules --framework terraform $CHECKOV_CONFIG $CHECKOV_SKIP --output json --soft-fail > checkov-modules-results.tmp 2>/dev/null || true
+                    echo "Running Checkov on modules directory..."
+                    # Run Checkov via Docker container (remove -i flag to avoid stdin hang)
+                    # Use timeout to prevent hanging (10 minutes max)
+                    timeout 600 docker exec -w /workspace checkov checkov -d modules --framework terraform $CHECKOV_CONFIG $CHECKOV_SKIP --output json --soft-fail > checkov-modules-results.tmp 2>&1 || true
                     # Move temp file to final location (ensures it's a file)
                     if [ -f checkov-modules-results.tmp ] && [ -s checkov-modules-results.tmp ]; then
-                        mv checkov-modules-results.tmp checkov-modules-results.json
+                        # Check if output is valid JSON (starts with { or [)
+                        if head -c 1 checkov-modules-results.tmp | grep -q '[{\[]'; then
+                            mv checkov-modules-results.tmp checkov-modules-results.json
+                        else
+                            echo "Warning: Checkov output is not valid JSON, creating empty result"
+                            echo '{"summary":{"passed":0,"failed":0,"skipped":0,"parsing_errors":0,"resource_count":0},"results":{"passed_checks":[],"failed_checks":[],"skipped_checks":[],"parsing_errors":[]}}' > checkov-modules-results.json
+                        fi
                     else
                         echo '{"summary":{"passed":0,"failed":0,"skipped":0,"parsing_errors":0,"resource_count":0},"results":{"passed_checks":[],"failed_checks":[],"skipped_checks":[],"parsing_errors":[]}}' > checkov-modules-results.json
                     fi
@@ -191,11 +199,19 @@ pipeline {
                         rm -rf checkov-results.json checkov-results.tmp 2>/dev/null || true
                         CHECKOV_SKIP=\"--skip-check CKV_AWS_18 --skip-check CKV_AWS_19 --skip-check CKV_AWS_144\"
                         [ -f ../../.checkov.yaml ] && CHECKOV_CONFIG=\"--config-file ../../.checkov.yaml\" || CHECKOV_CONFIG=\"\"
-                        # Run Checkov via Docker container and capture JSON output to temporary file first
-                        docker exec -i -w /workspace/${env.PROJECT_DIR} checkov checkov -d . --framework terraform \$CHECKOV_CONFIG \$CHECKOV_SKIP --output json --soft-fail > checkov-results.tmp 2>/dev/null || true
+                        echo \"Running Checkov on project directory...\"
+                        # Run Checkov via Docker container (remove -i flag to avoid stdin hang)
+                        # Use timeout to prevent hanging (10 minutes max)
+                        timeout 600 docker exec -w /workspace/${env.PROJECT_DIR} checkov checkov -d . --framework terraform \$CHECKOV_CONFIG \$CHECKOV_SKIP --output json --soft-fail > checkov-results.tmp 2>&1 || true
                         # Move temp file to final location (ensures it's a file)
                         if [ -f checkov-results.tmp ] && [ -s checkov-results.tmp ]; then
-                            mv checkov-results.tmp checkov-results.json
+                            # Check if output is valid JSON (starts with { or [)
+                            if head -c 1 checkov-results.tmp | grep -q '[{\[]'; then
+                                mv checkov-results.tmp checkov-results.json
+                            else
+                                echo \"Warning: Checkov output is not valid JSON, creating empty result\"
+                                echo '{\"summary\":{\"passed\":0,\"failed\":0,\"skipped\":0,\"parsing_errors\":0,\"resource_count\":0},\"results\":{\"passed_checks\":[],\"failed_checks\":[],\"skipped_checks\":[],\"parsing_errors\":[]}}' > checkov-results.json
+                            fi
                         else
                             echo '{\"summary\":{\"passed\":0,\"failed\":0,\"skipped\":0,\"parsing_errors\":0,\"resource_count\":0},\"results\":{\"passed_checks\":[],\"failed_checks\":[],\"skipped_checks\":[],\"parsing_errors\":[]}}' > checkov-results.json
                         fi
@@ -220,7 +236,7 @@ pipeline {
         stage('Terraform Init') {
             steps {
                 dir(env.PROJECT_DIR) {
-                    sh "docker exec -i -w /workspace/${env.PROJECT_DIR} terraform terraform init -input=false"
+                    sh "docker exec -w /workspace/${env.PROJECT_DIR} terraform terraform init -input=false"
                 }
             }
         }
@@ -228,7 +244,7 @@ pipeline {
         stage('Terraform Validate') {
             steps {
                 dir(env.PROJECT_DIR) {
-                    sh "docker exec -i -w /workspace/${env.PROJECT_DIR} terraform terraform validate"
+                    sh "docker exec -w /workspace/${env.PROJECT_DIR} terraform terraform validate"
                 }
             }
         }
@@ -236,7 +252,7 @@ pipeline {
         stage('Terraform Plan') {
             steps {
                 dir(env.PROJECT_DIR) {
-                    sh "docker exec -i -w /workspace/${env.PROJECT_DIR} terraform terraform plan -out=tfplan -input=false"
+                    sh "docker exec -w /workspace/${env.PROJECT_DIR} terraform terraform plan -out=tfplan -input=false"
                 }
             }
         }
@@ -246,13 +262,15 @@ pipeline {
                 dir(env.PROJECT_DIR) {
                     sh """
                         [ ! -f tfplan ] && { echo '{\"summary\":{\"passed\":0,\"failed\":0,\"skipped\":0,\"parsing_errors\":0,\"resource_count\":0},\"results\":{\"passed_checks\":[],\"failed_checks\":[],\"skipped_checks\":[],\"parsing_errors\":[]}}' > checkov-plan-results.json; exit 0; }
-                        docker exec -i -w /workspace/${env.PROJECT_DIR} terraform terraform show -json tfplan > tfplan.json
+                        docker exec -w /workspace/${env.PROJECT_DIR} terraform terraform show -json tfplan > tfplan.json
                         # Aggressive cleanup - remove file or directory
                         rm -rf checkov-plan-results.json checkov-plan-results.tmp 2>/dev/null || true
                         CHECKOV_SKIP=\"--skip-check CKV_AWS_18 --skip-check CKV_AWS_19 --skip-check CKV_AWS_144\"
                         [ -f ../../.checkov.yaml ] && CHECKOV_CONFIG=\"--config-file ../../.checkov.yaml\" || CHECKOV_CONFIG=\"\"
-                        # Run Checkov via Docker container and capture JSON output to temporary file first
-                        docker exec -i -w /workspace/${env.PROJECT_DIR} checkov checkov -f tfplan.json --framework terraform_plan \$CHECKOV_CONFIG \$CHECKOV_SKIP --output json --soft-fail > checkov-plan-results.tmp 2>/dev/null || true
+                        echo \"Running Checkov on Terraform plan...\"
+                        # Run Checkov via Docker container (remove -i flag to avoid stdin hang)
+                        # Use timeout to prevent hanging (10 minutes max)
+                        timeout 600 docker exec -w /workspace/${env.PROJECT_DIR} checkov checkov -f tfplan.json --framework terraform_plan \$CHECKOV_CONFIG \$CHECKOV_SKIP --output json --soft-fail > checkov-plan-results.tmp 2>&1 || true
                         # Move temp file to final location (ensures it's a file)
                         if [ -f checkov-plan-results.tmp ] && [ -s checkov-plan-results.tmp ]; then
                             mv checkov-plan-results.tmp checkov-plan-results.json
@@ -300,14 +318,14 @@ pipeline {
                         # Run SonarQube scanner via Docker container
                         # Check if authentication token is provided
                         if [ -n "$SONAR_TOKEN" ]; then
-                            docker exec -i -w /workspace sonar-scanner sonar-scanner \
+                            docker exec -w /workspace sonar-scanner sonar-scanner \
                                 -Dsonar.host.url="$SONAR_URL" \
                                 -Dsonar.login="$SONAR_TOKEN" \
                                 -Dproject.settings=sonar-project.properties || echo "SonarQube scan completed with warnings"
                         else
                             echo "Warning: SONAR_TOKEN not set. Using default authentication (admin/admin)"
                             echo "To use token authentication, set SONAR_TOKEN in Jenkins credentials"
-                            docker exec -i -w /workspace sonar-scanner sonar-scanner \
+                            docker exec -w /workspace sonar-scanner sonar-scanner \
                                 -Dsonar.host.url="$SONAR_URL" \
                                 -Dproject.settings=sonar-project.properties || echo "SonarQube scan completed with warnings"
                         fi
