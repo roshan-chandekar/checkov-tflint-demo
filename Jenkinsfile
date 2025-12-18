@@ -558,7 +558,8 @@ pipeline {
                         # Try to extract actual Checkov version and results from CLI output if available
                         CHECKOV_VERSION="unknown"
                         if [ -f checkov-modules-output.txt ]; then
-                            CHECKOV_VERSION=$(grep -i "checkov version" checkov-modules-output.txt | head -1 | sed 's/.*version[[:space:]]*\([0-9.]*\).*/\1/' || echo "unknown")
+                            # Extract version using grep and awk to avoid Groovy parsing issues with sed
+                            CHECKOV_VERSION=$(grep -i "checkov version" checkov-modules-output.txt | head -1 | awk '{for(i=1;i<=NF;i++){if($i ~ /^[0-9]+\.[0-9]+/){print $i; exit}}}' || echo "unknown")
                         fi
                         echo "{\"summary\":{\"passed\":0,\"failed\":0,\"skipped\":0,\"parsing_errors\":0,\"resource_count\":0,\"checkov_version\":\"$CHECKOV_VERSION\"},\"results\":{\"passed_checks\":[],\"failed_checks\":[],\"skipped_checks\":[],\"parsing_errors\":[]}}" > checkov-modules-results.json
                     else
@@ -660,7 +661,8 @@ pipeline {
                             # Try to extract actual Checkov version and results from CLI output if available
                             CHECKOV_VERSION="unknown"
                             if [ -f checkov-output.txt ]; then
-                                CHECKOV_VERSION=$(grep -i "checkov version" checkov-output.txt | head -1 | sed 's/.*version[[:space:]]*\([0-9.]*\).*/\1/' || echo "unknown")
+                                # Extract version using grep and awk to avoid Groovy parsing issues with sed
+                                CHECKOV_VERSION=$(grep -i "checkov version" checkov-output.txt | head -1 | awk '{for(i=1;i<=NF;i++){if($i ~ /^[0-9]+\.[0-9]+/){print $i; exit}}}' || echo "unknown")
                             fi
                             echo "{\"summary\":{\"passed\":0,\"failed\":0,\"skipped\":0,\"parsing_errors\":0,\"resource_count\":0,\"checkov_version\":\"$CHECKOV_VERSION\"},\"results\":{\"passed_checks\":[],\"failed_checks\":[],\"skipped_checks\":[],\"parsing_errors\":[]}}" > checkov-results.json
                         else
