@@ -347,7 +347,10 @@ pipeline {
 
     post {
         always {
-            sh 'find . -name "tfplan*" -type f -delete 2>/dev/null || true'
+            sh '''
+                find . -name "tfplan*" -type f -delete 2>/dev/null || true
+                find . -type d -name ".terraform" -exec rm -rf {} + 2>/dev/null || true
+            '''
         }
     }
 }

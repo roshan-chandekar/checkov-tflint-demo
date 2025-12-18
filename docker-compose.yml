@@ -139,7 +139,7 @@ services:
     image: hashicorp/terraform:latest
     container_name: terraform
     volumes:
-      - ./:/workspace:ro
+      - ./:/workspace:rw
       - terraform_cache:/root/.terraform.d
     working_dir: /workspace
     networks:
