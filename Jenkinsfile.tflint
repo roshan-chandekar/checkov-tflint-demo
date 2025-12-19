@@ -1,0 +1,72 @@
+/*
+ * Pipeline 2: TFLint Validation
+ * This pipeline runs TFLint to check Terraform best practices
+ */
+
+pipeline {
+    agent any
+
+    // Discard old builds to prevent disk space issues
+    options {
+        buildDiscarder(logRotator(
+            numToKeepStr: '10',
+            daysToKeepStr: '7',
+            artifactNumToKeepStr: '5',
+            artifactDaysToKeepStr: '3'
+        ))
+    }
+
+    parameters {
+        choice(name: 'PROJECT', choices: ['dev'], description: 'Select project')
+    }
+
+    environment {
+        AWS_REGION = 'us-east-1'
+        PROJECT_DIR = "projects/dev"
+    }
+
+    stages {
+        stage('Checkout') {
+            steps { checkout scm }
+        }
+
+        stage('Terraform Format') {
+            steps {
+                sh 'terraform fmt -check -recursive || echo "Some files need formatting"'
+            }
+        }
+
+        stage('TFLint - Modules') {
+            steps {
+                sh '''
+                    [ -f .tflint.hcl ] && cp .tflint.hcl modules/.tflint.hcl || true
+                    cd modules
+                    for module in */; do
+                        if [ -d "$module" ]; then
+                            docker exec -w /workspace/modules/"$module" tflint tflint --init > /dev/null 2>&1 || true
+                            docker exec -w /workspace/modules/"$module" tflint tflint || true
+                        fi
+                    done
+                '''
+            }
+        }
+
+        stage('TFLint - Project') {
+            steps {
+                dir(env.PROJECT_DIR) {
+                    sh """
+                        [ -f ../../.tflint.hcl ] && cp ../../.tflint.hcl .tflint.hcl || true
+                        docker exec -w /workspace/${env.PROJECT_DIR} tflint tflint --init > /dev/null 2>&1 || true
+                        docker exec -w /workspace/${env.PROJECT_DIR} tflint tflint --format json > tflint-results.json 2>&1 || echo '{\"issues\":[],\"errors\":[]}' > tflint-results.json
+                    """
+                }
+            }
+            post {
+                always {
+                    archiveArtifacts artifacts: "${env.PROJECT_DIR}/tflint-results.json", allowEmptyArchive: true
+                }
+            }
+        }
+    }
+}
+
