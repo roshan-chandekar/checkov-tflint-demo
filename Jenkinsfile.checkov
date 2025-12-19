@@ -40,25 +40,47 @@ pipeline {
             steps {
                 sh '''
                     # Create a minimal valid zip file if it doesn't exist (for Terraform validation)
+                    # Check both on host and verify it will be accessible in Docker container
                     if [ ! -f scripts/lambda_function.zip ]; then
                         echo "Creating placeholder Lambda zip file for validation..."
+                        mkdir -p scripts
                         cd scripts
                         # Create a minimal Python file
                         echo "def handler(event, context):" > lambda_function.py
                         echo "    return {'statusCode': 200, 'body': 'Hello from Lambda'}" >> lambda_function.py
-                        # Create zip file
+                        # Create zip file - try multiple methods
                         if command -v zip > /dev/null 2>&1; then
-                            zip -q lambda_function.zip lambda_function.py
-                            echo "✓ Placeholder lambda_function.zip created"
+                            zip -q lambda_function.zip lambda_function.py && echo "✓ Placeholder lambda_function.zip created (using zip)"
                         elif command -v python3 > /dev/null 2>&1; then
-                            python3 -m zipfile -c lambda_function.zip lambda_function.py
-                            echo "✓ Placeholder lambda_function.zip created (using Python)"
+                            python3 -m zipfile -c lambda_function.zip lambda_function.py && echo "✓ Placeholder lambda_function.zip created (using Python)"
                         else
-                            echo "WARNING: Could not create placeholder zip file. Terraform plan may fail."
+                            echo "WARNING: Could not create placeholder zip file. Trying Docker container..."
+                            # Try creating it via Docker container if tools not available on host
+                            docker exec terraform sh -c "cd /workspace/scripts && echo 'def handler(event, context):' > lambda_function.py && echo '    return {\"statusCode\": 200, \"body\": \"Hello from Lambda\"}' >> lambda_function.py && python3 -m zipfile -c lambda_function.zip lambda_function.py" && echo "✓ Placeholder created via Docker container" || echo "ERROR: Could not create placeholder zip file"
                         fi
                         cd ..
                     else
                         echo "✓ Lambda zip file already exists"
+                    fi
+                    # Verify file exists and show its location
+                    if [ -f scripts/lambda_function.zip ]; then
+                        echo "✓ Verified: scripts/lambda_function.zip exists ($(ls -lh scripts/lambda_function.zip | awk '{print $5}'))"
+                        # Also verify it's accessible from Docker container perspective
+                        if docker ps | grep -q terraform; then
+                            docker exec terraform test -f /workspace/scripts/lambda_function.zip && echo "✓ Verified: File accessible from Docker container" || echo "WARNING: File may not be accessible from Docker container"
+                        else
+                            echo "WARNING: Terraform container not running, cannot verify file accessibility"
+                        fi
+                    else
+                        echo "ERROR: Lambda zip file was not created successfully"
+                        echo "Attempting to create via Docker container as fallback..."
+                        # Final fallback: create via Docker container
+                        if docker ps | grep -q terraform; then
+                            docker exec terraform sh -c "mkdir -p /workspace/scripts && cd /workspace/scripts && echo 'def handler(event, context):' > lambda_function.py && echo '    return {\"statusCode\": 200, \"body\": \"Hello from Lambda\"}' >> lambda_function.py && python3 -m zipfile -c lambda_function.zip lambda_function.py" && echo "✓ Created via Docker container" || { echo "ERROR: Failed to create Lambda zip file"; exit 1; }
+                        else
+                            echo "ERROR: Cannot create Lambda zip file and Terraform container is not running"
+                            exit 1
+                        fi
                     fi
                 '''
             }
