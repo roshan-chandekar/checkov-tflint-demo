@@ -110,7 +110,7 @@ module "kms_kinesis" {
         Resource = "*"
         Condition = {
           StringEquals = {
-            "kms:ViaService" = "kinesis.${data.aws_region.current.name}.amazonaws.com"
+            "kms:ViaService" = "kinesis.${data.aws_region.current.id}.amazonaws.com"
           }
         }
       }
@@ -280,7 +280,7 @@ module "lambda_iam_role" {
           "logs:CreateLogStream",
           "logs:PutLogEvents"
         ]
-        Resource = "arn:aws:logs:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${var.project_name}-${var.project}-${var.lambda_function_name}*"
+        Resource = "arn:aws:logs:${data.aws_region.current.id}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${var.project_name}-${var.project}-${var.lambda_function_name}*"
       },
       {
         Effect = "Allow"

@@ -110,6 +110,13 @@ pipeline {
                             { echo "ERROR: Could not install zip"; exit 1; }
                         fi
                         chmod +x build_lambda.sh && ./build_lambda.sh
+                        # Verify the file was created
+                        if [ ! -f lambda_function.zip ]; then
+                            echo "ERROR: lambda_function.zip was not created"
+                            exit 1
+                        fi
+                        echo "✓ Lambda package created: $(pwd)/lambda_function.zip"
+                        ls -lh lambda_function.zip
                     '''
                 }
             }
