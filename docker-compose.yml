@@ -1,5 +1,10 @@
 version: '3.8'
 
+# Architecture:
+# - Jenkins: Installed directly on AWS EC2 (not in docker-compose)
+# - SonarQube, TFLint, Checkov, Sonar Scanner, Terraform: Run in Docker containers via docker-compose
+# - Jenkins on EC2 accesses these services via docker exec commands and connects to SonarQube on localhost:9000
+
 services:
   # PostgreSQL database for SonarQube
   postgres:
@@ -47,7 +52,7 @@ services:
         hard: 65536
     restart: unless-stopped
 
-  # TFLint service (can be used as a sidecar or called from Jenkins)
+  # TFLint service
   tflint:
     image: ghcr.io/terraform-linters/tflint:latest
     container_name: tflint
@@ -61,7 +66,7 @@ services:
     command: ["tail -f /dev/null"]
     restart: unless-stopped
 
-  # Checkov service (can be used as a sidecar or called from Jenkins)
+  # Checkov service
   checkov:
     image: bridgecrew/checkov:latest
     container_name: checkov
@@ -75,7 +80,7 @@ services:
     command: ["tail -f /dev/null"]
     restart: unless-stopped
 
-  # SonarQube Scanner (can be used from Jenkins)
+  # SonarQube Scanner
   sonar-scanner:
     image: sonarsource/sonar-scanner-cli:latest
     container_name: sonar-scanner
@@ -91,7 +96,7 @@ services:
     depends_on:
       - sonarqube
 
-  # Terraform service (can be used from Jenkins)
+  # Terraform service
   terraform:
     image: hashicorp/terraform:latest
     container_name: terraform

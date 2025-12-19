@@ -34,17 +34,17 @@ pipeline {
         stage('Verify Tools') {
             steps {
                 sh '''
-                    # Check if Docker socket is accessible (Jenkins container has Docker socket mounted)
+                    # Check if Docker socket is accessible (Jenkins needs access to Docker)
                     if [ ! -S /var/run/docker.sock ]; then
                         echo "ERROR: Docker socket not found at /var/run/docker.sock"
-                        echo "Ensure Jenkins container has Docker socket mounted"
+                        echo "Ensure Jenkins has Docker socket access"
                         exit 1
                     fi
                     
-                    # Install Docker CLI if not available (Jenkins container may not have it)
+                    # Install Docker CLI if not available
                     if ! command -v docker > /dev/null 2>&1; then
                         echo "Docker CLI not found, installing..."
-                        # Try to install Docker CLI (Jenkins container runs as root)
+                        # Try to install Docker CLI
                         if apt-get update -qq > /dev/null 2>&1 && apt-get install -y -qq docker.io curl > /dev/null 2>&1; then
                             echo "✓ Docker CLI installed successfully"
                         elif which apk > /dev/null 2>&1 && apk add --no-cache docker-cli > /dev/null 2>&1; then
@@ -52,7 +52,7 @@ pipeline {
                         else
                             echo "WARNING: Could not install Docker CLI automatically"
                             echo "Docker socket is available, but docker command not found"
-                            echo "You may need to install Docker CLI manually or use a custom Jenkins image"
+                            echo "You may need to install Docker CLI manually"
                             exit 1
                         fi
                     fi
@@ -301,14 +301,8 @@ pipeline {
                     # Check if SonarQube scanner is available via Docker
                     if command -v docker > /dev/null 2>&1 && docker ps | grep -q "sonar-scanner"; then
                         echo "Using SonarQube scanner from Docker container"
-                        # Determine SonarQube URL based on environment
-                        if docker ps | grep -q "jenkins-docker"; then
-                            # Jenkins is in Docker, use container name
-                            SONAR_URL="http://sonarqube:9000"
-                        else
-                            # Jenkins is on host, use localhost
-                            SONAR_URL="http://localhost:9000"
-                        fi
+                        # Jenkins is running on host, use localhost for SonarQube
+                        SONAR_URL="http://localhost:9000"
                         
                         # Update sonar-project.properties with correct URL
                         if [ -f sonar-project.properties ]; then
