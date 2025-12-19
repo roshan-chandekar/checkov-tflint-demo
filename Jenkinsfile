@@ -167,7 +167,7 @@ pipeline {
                     # Move temp file to final location (ensures it's a file)
                     if [ -f checkov-modules-results.tmp ] && [ -s checkov-modules-results.tmp ]; then
                         # Check if output is valid JSON (starts with { or [)
-                        if head -c 1 checkov-modules-results.tmp | grep -q '[{\[]'; then
+                        if head -c 1 checkov-modules-results.tmp | grep -q '[{\\[]'; then
                             mv checkov-modules-results.tmp checkov-modules-results.json
                         else
                             echo "Warning: Checkov output is not valid JSON, creating empty result"
@@ -206,7 +206,7 @@ pipeline {
                         # Move temp file to final location (ensures it's a file)
                         if [ -f checkov-results.tmp ] && [ -s checkov-results.tmp ]; then
                             # Check if output is valid JSON (starts with { or [)
-                            if head -c 1 checkov-results.tmp | grep -q '[{\[]'; then
+                            if head -c 1 checkov-results.tmp | grep -q '[{\\[]'; then
                                 mv checkov-results.tmp checkov-results.json
                             else
                                 echo \"Warning: Checkov output is not valid JSON, creating empty result\"
