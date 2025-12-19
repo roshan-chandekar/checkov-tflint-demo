@@ -36,6 +36,34 @@ pipeline {
             }
         }
 
+        stage('Create Lambda Placeholder') {
+            steps {
+                sh '''
+                    # Create a minimal valid zip file if it doesn't exist (for Terraform validation)
+                    if [ ! -f scripts/lambda_function.zip ]; then
+                        echo "Creating placeholder Lambda zip file for validation..."
+                        cd scripts
+                        # Create a minimal Python file
+                        echo "def handler(event, context):" > lambda_function.py
+                        echo "    return {'statusCode': 200, 'body': 'Hello from Lambda'}" >> lambda_function.py
+                        # Create zip file
+                        if command -v zip > /dev/null 2>&1; then
+                            zip -q lambda_function.zip lambda_function.py
+                            echo "✓ Placeholder lambda_function.zip created"
+                        elif command -v python3 > /dev/null 2>&1; then
+                            python3 -m zipfile -c lambda_function.zip lambda_function.py
+                            echo "✓ Placeholder lambda_function.zip created (using Python)"
+                        else
+                            echo "WARNING: Could not create placeholder zip file. Terraform plan may fail."
+                        fi
+                        cd ..
+                    else
+                        echo "✓ Lambda zip file already exists"
+                    fi
+                '''
+            }
+        }
+
         stage('Checkov - Modules') {
             steps {
                 sh '''

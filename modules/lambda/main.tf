@@ -6,7 +6,7 @@ resource "aws_lambda_function" "function" {
   runtime          = var.runtime
   timeout          = var.timeout
   memory_size      = var.memory_size
-  source_code_hash = var.source_code_hash != null ? var.source_code_hash : try(filebase64sha256(var.filename), null)
+  source_code_hash = var.source_code_hash != null ? var.source_code_hash : filebase64sha256(var.filename)
 
   dynamic "environment" {
     for_each = var.environment_variables != null ? [1] : []
