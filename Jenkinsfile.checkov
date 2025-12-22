@@ -1,229 +1,36 @@
-/*
- * Pipeline 1: Checkov Security Scanning
- * This pipeline runs Checkov security scans on Terraform code
- */
-
 pipeline {
     agent any
 
-    // Discard old builds to prevent disk space issues
     options {
-        buildDiscarder(logRotator(
-            numToKeepStr: '10',
-            daysToKeepStr: '7',
-            artifactNumToKeepStr: '5',
-            artifactDaysToKeepStr: '3'
-        ))
-    }
-
-    parameters {
-        choice(name: 'PROJECT', choices: ['dev'], description: 'Select project')
-    }
-
-    environment {
-        AWS_REGION = 'us-east-1'
-        PROJECT_DIR = "projects/dev"
+        timestamps()
     }
 
     stages {
+
         stage('Checkout') {
-            steps { checkout scm }
-        }
-
-        stage('Terraform Format') {
             steps {
-                sh 'terraform fmt -check -recursive || echo "Some files need formatting"'
+                git branch: 'main',
+                    credentialsId: 'roshan-chandekar',
+                    url: 'https://github.com/roshan-chandekar/checkov-tflint-demo.git'
             }
         }
 
-        stage('Create Lambda Placeholder') {
+        stage('Checkov Scan') {
             steps {
-                sh '''
-                    # Create a minimal valid zip file if it doesn't exist (for Terraform validation)
-                    # Check both on host and verify it will be accessible in Docker container
-                    if [ ! -f scripts/lambda_function.zip ]; then
-                        echo "Creating placeholder Lambda zip file for validation..."
-                        mkdir -p scripts
-                        cd scripts
-                        # Create a minimal Python file
-                        echo "def handler(event, context):" > lambda_function.py
-                        echo "    return {'statusCode': 200, 'body': 'Hello from Lambda'}" >> lambda_function.py
-                        # Create zip file - try multiple methods
-                        if command -v zip > /dev/null 2>&1; then
-                            zip -q lambda_function.zip lambda_function.py && echo "✓ Placeholder lambda_function.zip created (using zip)"
-                        elif command -v python3 > /dev/null 2>&1; then
-                            python3 -m zipfile -c lambda_function.zip lambda_function.py && echo "✓ Placeholder lambda_function.zip created (using Python)"
-                        else
-                            echo "WARNING: Could not create placeholder zip file. Trying Docker container..."
-                            # Try creating it via Docker container if tools not available on host
-                            docker exec terraform sh -c "cd /workspace/scripts && echo 'def handler(event, context):' > lambda_function.py && echo '    return {\"statusCode\": 200, \"body\": \"Hello from Lambda\"}' >> lambda_function.py && python3 -m zipfile -c lambda_function.zip lambda_function.py" && echo "✓ Placeholder created via Docker container" || echo "ERROR: Could not create placeholder zip file"
-                        fi
-                        cd ..
-                    else
-                        echo "✓ Lambda zip file already exists"
-                    fi
-                    # Verify file exists and show its location
-                    if [ -f scripts/lambda_function.zip ]; then
-                        echo "✓ Verified: scripts/lambda_function.zip exists ($(ls -lh scripts/lambda_function.zip | awk '{print $5}'))"
-                        # Also verify it's accessible from Docker container perspective
-                        if docker ps | grep -q terraform; then
-                            docker exec terraform test -f /workspace/scripts/lambda_function.zip && echo "✓ Verified: File accessible from Docker container" || echo "WARNING: File may not be accessible from Docker container"
-                        else
-                            echo "WARNING: Terraform container not running, cannot verify file accessibility"
-                        fi
-                    else
-                        echo "ERROR: Lambda zip file was not created successfully"
-                        echo "Attempting to create via Docker container as fallback..."
-                        # Final fallback: create via Docker container
-                        if docker ps | grep -q terraform; then
-                            docker exec terraform sh -c "mkdir -p /workspace/scripts && cd /workspace/scripts && echo 'def handler(event, context):' > lambda_function.py && echo '    return {\"statusCode\": 200, \"body\": \"Hello from Lambda\"}' >> lambda_function.py && python3 -m zipfile -c lambda_function.zip lambda_function.py" && echo "✓ Created via Docker container" || { echo "ERROR: Failed to create Lambda zip file"; exit 1; }
-                        else
-                            echo "ERROR: Cannot create Lambda zip file and Terraform container is not running"
-                            exit 1
-                        fi
-                    fi
-                '''
-            }
-        }
-
-        stage('Checkov - Modules') {
-            steps {
-                sh '''
-                    # Aggressive cleanup - remove file or directory
-                    rm -rf checkov-modules-results.json checkov-modules-results.tmp 2>/dev/null || true
-                    CHECKOV_SKIP="--skip-check CKV_AWS_18 --skip-check CKV_AWS_19 --skip-check CKV_AWS_144"
-                    [ -f .checkov.yaml ] && CHECKOV_CONFIG="--config-file .checkov.yaml" || CHECKOV_CONFIG=""
-                    echo "Running Checkov on modules directory..."
-                    # Run Checkov via Docker container (remove -i flag to avoid stdin hang)
-                    # Use timeout to prevent hanging (10 minutes max)
-                    timeout 600 docker exec -w /workspace checkov checkov -d modules --framework terraform $CHECKOV_CONFIG $CHECKOV_SKIP --output json --soft-fail > checkov-modules-results.tmp 2>&1 || true
-                    # Move temp file to final location (ensures it's a file)
-                    if [ -f checkov-modules-results.tmp ] && [ -s checkov-modules-results.tmp ]; then
-                        # Check if output is valid JSON (starts with { or [)
-                        if head -c 1 checkov-modules-results.tmp | grep -q '[{\\[]'; then
-                            mv checkov-modules-results.tmp checkov-modules-results.json
-                        else
-                            echo "Warning: Checkov output is not valid JSON, creating empty result"
-                            echo '{"summary":{"passed":0,"failed":0,"skipped":0,"parsing_errors":0,"resource_count":0},"results":{"passed_checks":[],"failed_checks":[],"skipped_checks":[],"parsing_errors":[]}}' > checkov-modules-results.json
-                        fi
-                    else
-                        echo '{"summary":{"passed":0,"failed":0,"skipped":0,"parsing_errors":0,"resource_count":0},"results":{"passed_checks":[],"failed_checks":[],"skipped_checks":[],"parsing_errors":[]}}' > checkov-modules-results.json
-                    fi
-                    # Final safety check - remove directory if it exists
-                    [ -d checkov-modules-results.json ] && rm -rf checkov-modules-results.json && echo '{"summary":{"passed":0,"failed":0,"skipped":0,"parsing_errors":0,"resource_count":0},"results":{"passed_checks":[],"failed_checks":[],"skipped_checks":[],"parsing_errors":[]}}' > checkov-modules-results.json || true
-                '''
-            }
-            post {
-                always {
+                script {
                     sh '''
-                        [ -d checkov-modules-results.json ] && rm -rf checkov-modules-results.json || true
-                        [ ! -f checkov-modules-results.json ] && echo "{}" > checkov-modules-results.json || true
+                    rm -rf results.xml || true
+
+                    docker run --rm \
+                      --user $(id -u):$(id -g) \
+                      -v "$PWD:$PWD" \
+                      -w "$PWD" \
+                      bridgecrew/checkov:latest \
+                      -d . \
+                      -o cli -o junitxml \
+                      --output-file-path . \
+                      --soft-fail
                     '''
-                    archiveArtifacts artifacts: 'checkov-modules-results.json', allowEmptyArchive: true
-                }
-            }
-        }
-
-        stage('Checkov - Project') {
-            steps {
-                dir(env.PROJECT_DIR) {
-                    sh """
-                        # Aggressive cleanup - remove file or directory
-                        rm -rf checkov-results.json checkov-results.tmp 2>/dev/null || true
-                        CHECKOV_SKIP=\"--skip-check CKV_AWS_18 --skip-check CKV_AWS_19 --skip-check CKV_AWS_144\"
-                        [ -f ../../.checkov.yaml ] && CHECKOV_CONFIG=\"--config-file ../../.checkov.yaml\" || CHECKOV_CONFIG=\"\"
-                        echo \"Running Checkov on project directory...\"
-                        # Run Checkov via Docker container (remove -i flag to avoid stdin hang)
-                        # Use timeout to prevent hanging (10 minutes max)
-                        timeout 600 docker exec -w /workspace/${env.PROJECT_DIR} checkov checkov -d . --framework terraform \$CHECKOV_CONFIG \$CHECKOV_SKIP --output json --soft-fail > checkov-results.tmp 2>&1 || true
-                        # Move temp file to final location (ensures it's a file)
-                        if [ -f checkov-results.tmp ] && [ -s checkov-results.tmp ]; then
-                            # Check if output is valid JSON (starts with { or [)
-                            if head -c 1 checkov-results.tmp | grep -q '[{\\[]'; then
-                                mv checkov-results.tmp checkov-results.json
-                            else
-                                echo \"Warning: Checkov output is not valid JSON, creating empty result\"
-                                echo '{\"summary\":{\"passed\":0,\"failed\":0,\"skipped":0,\"parsing_errors\":0,\"resource_count\":0},\"results\":{\"passed_checks\":[],\"failed_checks\":[],\"skipped_checks\":[],\"parsing_errors\":[]}}' > checkov-results.json
-                            fi
-                        else
-                            echo '{\"summary\":{\"passed\":0,\"failed\":0,\"skipped\":0,\"parsing_errors\":0,\"resource_count\":0},\"results\":{\"passed_checks\":[],\"failed_checks\":[],\"skipped_checks\":[],\"parsing_errors\":[]}}' > checkov-results.json
-                        fi
-                        # Final safety check - remove directory if it exists
-                        [ -d checkov-results.json ] && rm -rf checkov-results.json && echo '{\"summary\":{\"passed\":0,\"failed\":0,\"skipped\":0,\"parsing_errors\":0,\"resource_count\":0},\"results\":{\"passed_checks\":[],\"failed_checks\":[],\"skipped_checks\":[],\"parsing_errors\":[]}}' > checkov-results.json || true
-                    """
-                }
-            }
-            post {
-                always {
-                    dir(env.PROJECT_DIR) {
-                        sh '''
-                            [ -d checkov-results.json ] && rm -rf checkov-results.json || true
-                            [ ! -f checkov-results.json ] && echo "{}" > checkov-results.json || true
-                        '''
-                    }
-                    archiveArtifacts artifacts: "${env.PROJECT_DIR}/checkov-results.json", allowEmptyArchive: true
-                }
-            }
-        }
-
-        stage('Terraform Init') {
-            steps {
-                dir(env.PROJECT_DIR) {
-                    sh "docker exec -w /workspace/${env.PROJECT_DIR} terraform terraform init -input=false"
-                }
-            }
-        }
-
-        stage('Terraform Validate') {
-            steps {
-                dir(env.PROJECT_DIR) {
-                    sh "docker exec -w /workspace/${env.PROJECT_DIR} terraform terraform validate"
-                }
-            }
-        }
-
-        stage('Terraform Plan') {
-            steps {
-                dir(env.PROJECT_DIR) {
-                    sh "docker exec -w /workspace/${env.PROJECT_DIR} terraform terraform plan -out=tfplan -input=false"
-                }
-            }
-        }
-
-        stage('Checkov - Plan') {
-            steps {
-                dir(env.PROJECT_DIR) {
-                    sh """
-                        [ ! -f tfplan ] && { echo '{\"summary\":{\"passed\":0,\"failed\":0,\"skipped\":0,\"parsing_errors\":0,\"resource_count\":0},\"results\":{\"passed_checks\":[],\"failed_checks\":[],\"skipped_checks\":[],\"parsing_errors\":[]}}' > checkov-plan-results.json; exit 0; }
-                        docker exec -w /workspace/${env.PROJECT_DIR} terraform terraform show -json tfplan > tfplan.json
-                        # Aggressive cleanup - remove file or directory
-                        rm -rf checkov-plan-results.json checkov-plan-results.tmp 2>/dev/null || true
-                        CHECKOV_SKIP=\"--skip-check CKV_AWS_18 --skip-check CKV_AWS_19 --skip-check CKV_AWS_144\"
-                        [ -f ../../.checkov.yaml ] && CHECKOV_CONFIG=\"--config-file ../../.checkov.yaml\" || CHECKOV_CONFIG=\"\"
-                        echo \"Running Checkov on Terraform plan...\"
-                        # Run Checkov via Docker container (remove -i flag to avoid stdin hang)
-                        # Use timeout to prevent hanging (10 minutes max)
-                        timeout 600 docker exec -w /workspace/${env.PROJECT_DIR} checkov checkov -f tfplan.json --framework terraform_plan \$CHECKOV_CONFIG \$CHECKOV_SKIP --output json --soft-fail > checkov-plan-results.tmp 2>&1 || true
-                        # Move temp file to final location (ensures it's a file)
-                        if [ -f checkov-plan-results.tmp ] && [ -s checkov-plan-results.tmp ]; then
-                            mv checkov-plan-results.tmp checkov-plan-results.json
-                        else
-                            echo '{\"summary\":{\"passed\":0,\"failed\":0,\"skipped\":0,\"parsing_errors\":0,\"resource_count\":0},\"results\":{\"passed_checks\":[],\"failed_checks\":[],\"skipped_checks\":[],\"parsing_errors\":[]}}' > checkov-plan-results.json
-                        fi
-                        # Final safety check - remove directory if it exists
-                        [ -d checkov-plan-results.json ] && rm -rf checkov-plan-results.json && echo '{\"summary\":{\"passed\":0,\"failed\":0,\"skipped\":0,\"parsing_errors\":0,\"resource_count\":0},\"results\":{\"passed_checks\":[],\"failed_checks\":[],\"skipped_checks\":[],\"parsing_errors\":[]}}' > checkov-plan-results.json || true
-                    """
-                }
-            }
-            post {
-                always {
-                    dir(env.PROJECT_DIR) {
-                        sh '''
-                            [ -d checkov-plan-results.json ] && rm -rf checkov-plan-results.json || true
-                            [ ! -f checkov-plan-results.json ] && echo "{}" > checkov-plan-results.json || true
-                        '''
-                    }
-                    archiveArtifacts artifacts: "${env.PROJECT_DIR}/checkov-plan-results.json", allowEmptyArchive: true
                 }
             }
         }
@@ -231,11 +38,10 @@ pipeline {
 
     post {
         always {
-            sh '''
-                find . -name "tfplan*" -type f -delete 2>/dev/null || true
-                find . -type d -name ".terraform" -exec rm -rf {} + 2>/dev/null || true
-            '''
+            junit allowEmptyResults: true, testResults: '*junitxml.xml'
+        }
+        success {
+            echo "✅ Checkov scan completed (soft-fail enabled)"
         }
     }
 }
-
