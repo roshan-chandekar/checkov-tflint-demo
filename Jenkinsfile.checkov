@@ -16,9 +16,11 @@ pipeline {
         stage('Checkov Scan') {
             steps {
                 sh '''
-                set -e
-                rm -f checkov.sarif checkov.sarif.gz checkov.sarif.b64 || true
+                set +e
 
+                rm -f checkov.txt checkov.json || true
+
+                # Run Checkov CLI
                 docker run --rm \
                   --user $(id -u):$(id -g) \
                   -v "$PWD:$PWD" \
@@ -26,14 +28,15 @@ pipeline {
                   bridgecrew/checkov:latest \
                   -d . \
                   --framework terraform \
-                  -o sarif \
-                  --output-file-path checkov.sarif \
-                  --soft-fail
+                  -o cli -o json \
+                  --output-file-path checkov.json | tee checkov.txt
+
+                exit 0
                 '''
             }
         }
 
-        stage('PR Decoration (GitHub)') {
+        stage('Post or Update PR Comment') {
             when {
                 expression { env.CHANGE_ID != null }
             }
@@ -44,24 +47,67 @@ pipeline {
                     sh '''
                     set -e
 
-                    gzip -c checkov.sarif > checkov.sarif.gz
-                    base64 checkov.sarif.gz > checkov.sarif.b64
-
                     OWNER=$(echo "$GIT_URL" | sed -E 's#.*/([^/]+)/([^/.]+)(\\.git)?#\\1#')
                     REPO=$(echo "$GIT_URL" | sed -E 's#.*/([^/]+)/([^/.]+)(\\.git)?#\\2#')
 
-                    curl -s -X POST \
-                      -H "Authorization: Bearer $GITHUB_TOKEN" \
+                    # PR number
+                    PR=$CHANGE_ID
+
+                    # Extract summary from CLI output
+                    SUMMARY=$(grep -E "Passed checks:|Failed checks:|Skipped checks:" checkov.txt || true)
+
+                    # Prepare comment body
+                    COMMENT=$(cat <<EOF
+### 🔍 Checkov Terraform Scan Results
+
+**Repository:** \`$REPO\`  
+**PR:** #$PR  
+**Commit:** \`$GIT_COMMIT\`
+
+\`\`\`
+$SUMMARY
+\`\`\`
+
+**JSON Results:**
+\`\`\`json
+$(cat checkov.json)
+\`\`\`
+
+📄 Full output available in Jenkins build logs
+EOF
+)
+
+                    # 1️⃣ Get existing comment ID for this PR (look for marker)
+                    EXISTING_COMMENT_ID=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
                       -H "Accept: application/vnd.github+json" \
-                      https://api.github.com/repos/$OWNER/$REPO/code-scanning/sarifs \
-                      -d "{
-                        \\"commit_sha\\": \\"$GIT_COMMIT\\",
-                        \\"ref\\": \\"refs/pull/$CHANGE_ID/merge\\",
-                        \\"sarif\\": \\"$(cat checkov.sarif.b64)\\"
-                      }"
+                      https://api.github.com/repos/$OWNER/$REPO/issues/$PR/comments \
+                      | jq -r '.[] | select(.body | contains("### 🔍 Checkov Terraform Scan Results")) | .id' | head -n1)
+
+                    # 2️⃣ Update if exists, else create new
+                    if [ -n "$EXISTING_COMMENT_ID" ]; then
+                        echo "Updating existing PR comment ID: $EXISTING_COMMENT_ID"
+                        curl -s -X PATCH \
+                          -H "Authorization: Bearer $GITHUB_TOKEN" \
+                          -H "Accept: application/vnd.github+json" \
+                          https://api.github.com/repos/$OWNER/$REPO/issues/comments/$EXISTING_COMMENT_ID \
+                          -d "$(jq -n --arg body "$COMMENT" '{body: $body}')"
+                    else
+                        echo "Creating new PR comment"
+                        curl -s -X POST \
+                          -H "Authorization: Bearer $GITHUB_TOKEN" \
+                          -H "Accept: application/vnd.github+json" \
+                          https://api.github.com/repos/$OWNER/$REPO/issues/$PR/comments \
+                          -d "$(jq -n --arg body "$COMMENT" '{body: $body}')"
+                    fi
                     '''
                 }
             }
+        }
+    }
+
+    post {
+        success {
+            echo "✅ Checkov scan completed and PR comment updated"
         }
     }
 }
