@@ -44,6 +44,7 @@ set +e
 rm -f tfsec.txt tfsec.json || true
 
 docker run --rm \
+  --user $(id -u):$(id -g) \
   -v "$PWD:$PWD" \
   -w "$PWD" \
   liamg/tfsec:latest \
