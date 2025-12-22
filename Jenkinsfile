@@ -19,6 +19,13 @@ docker run --rm \
   -v "$PWD:$PWD" \
   -w "$PWD" \
   ghcr.io/terraform-linters/tflint:latest \
+  tflint --init
+
+# Then run lint
+docker run --rm \
+  -v "$PWD:$PWD" \
+  -w "$PWD" \
+  ghcr.io/terraform-linters/tflint:latest \
   --format json > tflint.json
 
 docker run --rm \
