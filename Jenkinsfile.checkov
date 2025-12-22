@@ -16,21 +16,21 @@ pipeline {
         stage('Checkov Scan') {
             steps {
                 sh '''
-                set +e
-                rm -f checkov.txt checkov.json || true
+set +e
+rm -f checkov.txt checkov.json || true
 
-                docker run --rm \
-                  --user $(id -u):$(id -g) \
-                  -v "$PWD:$PWD" \
-                  -w "$PWD" \
-                  bridgecrew/checkov:latest \
-                  -d . \
-                  --framework terraform \
-                  -o cli -o json \
-                  --output-file-path checkov.json | tee checkov.txt
+docker run --rm \
+  --user $(id -u):$(id -g) \
+  -v "$PWD:$PWD" \
+  -w "$PWD" \
+  bridgecrew/checkov:latest \
+  -d . \
+  --framework terraform \
+  -o cli -o json \
+  --output-file-path checkov.json | tee checkov.txt
 
-                exit 0
-                '''
+exit 0
+'''
             }
         }
 
@@ -43,18 +43,15 @@ pipeline {
                     string(credentialsId: 'roshan-chandekar', variable: 'GITHUB_TOKEN')
                 ]) {
                     sh '''
-                    set -e
+set -e
 
-                    # Extract GitHub owner/repo
-                    OWNER=$(echo "$GIT_URL" | sed -E 's#.*/([^/]+)/([^/.]+)(\\.git)?#\\1#')
-                    REPO=$(echo "$GIT_URL" | sed -E 's#.*/([^/]+)/([^/.]+)(\\.git)?#\\2#')
-                    PR=$CHANGE_ID
+OWNER=$(echo "$GIT_URL" | sed -E 's#.*/([^/]+)/([^/.]+)(\\.git)?#\\1#')
+REPO=$(echo "$GIT_URL" | sed -E 's#.*/([^/]+)/([^/.]+)(\\.git)?#\\2#')
+PR=$CHANGE_ID
 
-                    # Extract summary
-                    SUMMARY=$(grep -E "Passed checks:|Failed checks:|Skipped checks:" checkov.txt || true)
+SUMMARY=$(grep -E "Passed checks:|Failed checks:|Skipped checks:" checkov.txt || true)
 
-                    # Prepare PR comment body (indented code block)
-                    COMMENT=$(cat <<EOF
+COMMENT=$(cat <<EOF
 ### 🔍 Checkov Terraform Scan Results
 
 Repository: $REPO
@@ -71,6 +68,35 @@ Full output available in Jenkins build logs
 EOF
 )
 
-                    # Check for existing PR comment
-                    EXISTING_COMMENT_ID=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
-                      -H "Accept: application/vnd.g
+EXISTING_COMMENT_ID=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
+  -H "Accept: application/vnd.github+json" \
+  https://api.github.com/repos/$OWNER/$REPO/issues/$PR/comments \
+  | jq -r '.[] | select(.body | contains("### 🔍 Checkov Terraform Scan Results")) | .id' | head -n1)
+
+if [ -n "$EXISTING_COMMENT_ID" ]; then
+    echo "Updating existing PR comment ID: $EXISTING_COMMENT_ID"
+    curl -s -X PATCH \
+      -H "Authorization: Bearer $GITHUB_TOKEN" \
+      -H "Accept: application/vnd.github+json" \
+      https://api.github.com/repos/$OWNER/$REPO/issues/comments/$EXISTING_COMMENT_ID \
+      -d "$(jq -n --arg body "$COMMENT" '{body: $body}')"
+else
+    echo "Creating new PR comment"
+    curl -s -X POST \
+      -H "Authorization: Bearer $GITHUB_TOKEN" \
+      -H "Accept: application/vnd.github+json" \
+      https://api.github.com/repos/$OWNER/$REPO/issues/$PR/comments \
+      -d "$(jq -n --arg body "$COMMENT" '{body: $body}')"
+fi
+'''
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "✅ Checkov scan completed and PR comment updated"
+        }
+    }
+}
