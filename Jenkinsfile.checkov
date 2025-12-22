@@ -9,27 +9,65 @@ pipeline {
 
         stage('Checkout') {
             steps {
-                git branch: 'main',
-                    credentialsId: 'roshan-chandekar',
-                    url: 'https://github.com/roshan-chandekar/checkov-tflint-demo.git'
+                checkout scm
             }
         }
 
-        stage('Checkov Scan') {
+        stage('Checkov Scan (SARIF)') {
             steps {
-                script {
-                    sh '''
-                    rm -rf results.xml || true
+                sh '''
+                set -e
 
-                    docker run --rm \
-                      --user $(id -u):$(id -g) \
-                      -v "$PWD:$PWD" \
-                      -w "$PWD" \
-                      bridgecrew/checkov:latest \
-                      -d . \
-                      -o cli -o junitxml \
-                      --output-file-path . \
-                      --soft-fail
+                # Clean previous artifacts
+                rm -f checkov.sarif checkov.sarif.gz checkov.sarif.b64 || true
+
+                # Run Checkov (ENTRYPOINT is already 'checkov')
+                docker run --rm \
+                  --user $(id -u):$(id -g) \
+                  -v "$PWD:$PWD" \
+                  -w "$PWD" \
+                  bridgecrew/checkov:latest \
+                  -d . \
+                  --framework terraform \
+                  -o sarif \
+                  --output-file-path checkov.sarif \
+                  --soft-fail
+                '''
+            }
+        }
+
+        stage('Upload SARIF to GitHub (PR Decoration)') {
+            when {
+                expression { return env.CHANGE_ID != null }
+            }
+            steps {
+                withCredentials([
+                    string(credentialsId: 'github-token', variable: 'GITHUB_TOKEN')
+                ]) {
+                    sh '''
+                    set -e
+
+                    # Compress and encode SARIF (GitHub requirement)
+                    gzip -c checkov.sarif > checkov.sarif.gz
+                    base64 checkov.sarif.gz > checkov.sarif.b64
+
+                    # Extract owner and repo from GIT_URL
+                    OWNER=$(echo "$GIT_URL" | sed -E 's#.*/([^/]+)/([^/.]+)(\\.git)?#\\1#')
+                    REPO=$(echo "$GIT_URL" | sed -E 's#.*/([^/]+)/([^/.]+)(\\.git)?#\\2#')
+
+                    echo "Uploading SARIF to GitHub repo: $OWNER/$REPO"
+                    echo "PR Number: $CHANGE_ID"
+                    echo "Commit SHA: $GIT_COMMIT"
+
+                    curl -s -X POST \
+                      -H "Authorization: Bearer $GITHUB_TOKEN" \
+                      -H "Accept: application/vnd.github+json" \
+                      https://api.github.com/repos/$OWNER/$REPO/code-scanning/sarifs \
+                      -d "{
+                        \\"commit_sha\\": \\"$GIT_COMMIT\\",
+                        \\"ref\\": \\"refs/pull/$CHANGE_ID/merge\\",
+                        \\"sarif\\": \\"$(cat checkov.sarif.b64)\\"
+                      }"
                     '''
                 }
             }
@@ -37,11 +75,11 @@ pipeline {
     }
 
     post {
-        always {
-            junit allowEmptyResults: true, testResults: '*junitxml.xml'
-        }
         success {
-            echo "✅ Checkov scan completed (soft-fail enabled)"
+            echo "✅ Checkov scan completed and PR decoration applied (if PR build)"
+        }
+        failure {
+            echo "❌ Pipeline failed due to execution error"
         }
     }
 }
