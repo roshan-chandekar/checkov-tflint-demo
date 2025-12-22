@@ -53,7 +53,7 @@ pipeline {
                     # Extract summary
                     SUMMARY=$(grep -E "Passed checks:|Failed checks:|Skipped checks:" checkov.txt || true)
 
-                    # Prepare comment body using indentation instead of backticks
+                    # Prepare PR comment body (indented code block)
                     COMMENT=$(cat <<EOF
 ### 🔍 Checkov Terraform Scan Results
 
@@ -71,37 +71,6 @@ Full output available in Jenkins build logs
 EOF
 )
 
-                    # Check if comment already exists
+                    # Check for existing PR comment
                     EXISTING_COMMENT_ID=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
-                      -H "Accept: application/vnd.github+json" \
-                      https://api.github.com/repos/$OWNER/$REPO/issues/$PR/comments \
-                      | jq -r '.[] | select(.body | contains("### 🔍 Checkov Terraform Scan Results")) | .id' | head -n1)
-
-                    # Update or create comment
-                    if [ -n "$EXISTING_COMMENT_ID" ]; then
-                        echo "Updating existing PR comment ID: $EXISTING_COMMENT_ID"
-                        curl -s -X PATCH \
-                          -H "Authorization: Bearer $GITHUB_TOKEN" \
-                          -H "Accept: application/vnd.github+json" \
-                          https://api.github.com/repos/$OWNER/$REPO/issues/comments/$EXISTING_COMMENT_ID \
-                          -d "$(jq -n --arg body "$COMMENT" '{body: $body}')"
-                    else
-                        echo "Creating new PR comment"
-                        curl -s -X POST \
-                          -H "Authorization: Bearer $GITHUB_TOKEN" \
-                          -H "Accept: application/vnd.github+json" \
-                          https://api.github.com/repos/$OWNER/$REPO/issues/$PR/comments \
-                          -d "$(jq -n --arg body "$COMMENT" '{body: $body}')"
-                    fi
-                    '''
-                }
-            }
-        }
-    }
-
-    post {
-        success {
-            echo "✅ Checkov scan completed and PR comment updated"
-        }
-    }
-}
+                      -H "Accept: application/vnd.g
