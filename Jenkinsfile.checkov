@@ -45,29 +45,63 @@ pipeline {
                     sh '''
                     set -e
 
+                    # Extract GitHub owner/repo
                     OWNER=$(echo "$GIT_URL" | sed -E 's#.*/([^/]+)/([^/.]+)(\\.git)?#\\1#')
                     REPO=$(echo "$GIT_URL" | sed -E 's#.*/([^/]+)/([^/.]+)(\\.git)?#\\2#')
-
                     PR=$CHANGE_ID
 
+                    # Extract summary
                     SUMMARY=$(grep -E "Passed checks:|Failed checks:|Skipped checks:" checkov.txt || true)
 
+                    # Prepare comment body using indentation instead of backticks
                     COMMENT=$(cat <<EOF
 ### 🔍 Checkov Terraform Scan Results
 
-**Repository:** `$REPO`  
-**PR:** #$PR  
-**Commit:** `$GIT_COMMIT`
+Repository: $REPO
+PR: #$PR
+Commit: $GIT_COMMIT
 
-\`\`\`
+Summary:
 $SUMMARY
-\`\`\`
 
-**JSON Results:**
-\`\`\`json
-$(cat checkov.json)
-\`\`\`
+JSON Results:
+$(cat checkov.json | sed 's/^/    /')
 
-📄 Full output available in Jenkins build logs
+Full output available in Jenkins build logs
 EOF
 )
+
+                    # Check if comment already exists
+                    EXISTING_COMMENT_ID=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
+                      -H "Accept: application/vnd.github+json" \
+                      https://api.github.com/repos/$OWNER/$REPO/issues/$PR/comments \
+                      | jq -r '.[] | select(.body | contains("### 🔍 Checkov Terraform Scan Results")) | .id' | head -n1)
+
+                    # Update or create comment
+                    if [ -n "$EXISTING_COMMENT_ID" ]; then
+                        echo "Updating existing PR comment ID: $EXISTING_COMMENT_ID"
+                        curl -s -X PATCH \
+                          -H "Authorization: Bearer $GITHUB_TOKEN" \
+                          -H "Accept: application/vnd.github+json" \
+                          https://api.github.com/repos/$OWNER/$REPO/issues/comments/$EXISTING_COMMENT_ID \
+                          -d "$(jq -n --arg body "$COMMENT" '{body: $body}')"
+                    else
+                        echo "Creating new PR comment"
+                        curl -s -X POST \
+                          -H "Authorization: Bearer $GITHUB_TOKEN" \
+                          -H "Accept: application/vnd.github+json" \
+                          https://api.github.com/repos/$OWNER/$REPO/issues/$PR/comments \
+                          -d "$(jq -n --arg body "$COMMENT" '{body: $body}')"
+                    fi
+                    '''
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "✅ Checkov scan completed and PR comment updated"
+        }
+    }
+}
