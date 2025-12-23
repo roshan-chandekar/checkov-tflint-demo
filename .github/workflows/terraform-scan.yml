@@ -1,63 +1,84 @@
-name: Terraform Scan
+name: "Terraform Production Scan"
 
 on:
-    push:
-        branches:
-            - main
-            - dev
-    workflow_dispatch:
-    
+  pull_request:
+    branches: [ main, dev ]
+  workflow_dispatch:
+
+# Production Best Practice: Cancel old runs if new commits are pushed
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   scan:
+    name: "Security & Linting"
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pull-requests: write # Required to post the comment
+      pull-requests: write
+      security-events: write # Required for SARIF upload
+
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
+      # --- TFLint with Caching ---
+      - name: Cache TFLint Plugins
+        uses: actions/cache@v4
+        with:
+          path: ~/.tflint.d/plugins
+          key: tflint-${{ runner.os }}-${{ hashFiles('.tflint.hcl') }}
+
       - name: Setup TFLint
         uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: latest
 
       - name: Run TFLint
         id: tflint
         run: |
           tflint --init
-          
-          # Run TFLint and capture output.
-          # [ $? -eq 2 ] ensures we don't fail the build if issues are found, 
-          # but we do fail if there's a config error (exit code 1).
+          # We use '|| [ $? -eq 2 ]' to allow the script to continue if linting issues are found
           REPORT=$(tflint -f compact | sed 's/\x1b\[[0-9;]*m//g') || [ $? -eq 2 ]
-          
           echo "stdout<<EOF" >> $GITHUB_OUTPUT
           echo "${REPORT:-✅ No linting issues found.}" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
+      # --- tfsec ---
       - name: Run tfsec
         id: tfsec
         run: |
           curl -sSLo ./tfsec https://github.com/aquasecurity/tfsec/releases/latest/download/tfsec-linux-amd64 && chmod +x ./tfsec
           ./tfsec . --format json > tfsec_results.json || true
           
-          # Extraction with fallback to 0
-          FAILED=$(jq '[.results[] | select(.status=="fail")] | length' tfsec_results.json || echo 0)
-          PASSED=$(jq '[.results[] | select(.status=="pass")] | length' tfsec_results.json || echo 0)
-          echo "failed=$FAILED" >> $GITHUB_OUTPUT
-          echo "passed=$PASSED" >> $GITHUB_OUTPUT
+          echo "failed=$(jq '[.results[] | select(.status=="fail")] | length' tfsec_results.json || echo 0)" >> $GITHUB_OUTPUT
+          echo "passed=$(jq '[.results[] | select(.status=="pass")] | length' tfsec_results.json || echo 0)" >> $GITHUB_OUTPUT
 
+      # --- Checkov (SARIF + JSON) ---
       - name: Run Checkov
         id: checkov
         run: |
           pip install checkov
-          checkov -d . --output json --soft-fail > checkov_results.json || true
+          checkov -d . --output json --output sarif --soft-fail > checkov_results.json || true
           
-          # Robust JQ for multi-framework results
-          PASSED=$(jq '[. | if type=="array" then .[].summary.passed else .summary.passed end] | add' checkov_results.json || echo 0)
-          FAILED=$(jq '[. | if type=="array" then .[].summary.failed else .summary.failed end] | add' checkov_results.json || echo 0)
+          # Fix for empty "Passed" results: Use . // 0 to ensure a number is returned
+          PASSED=$(jq '[. | if type=="array" then .[].summary.passed else .summary.passed end] | add | . // 0' checkov_results.json)
+          FAILED=$(jq '[. | if type=="array" then .[].summary.failed else .summary.failed end] | add | . // 0' checkov_results.json)
+          
           echo "passed=$PASSED" >> $GITHUB_OUTPUT
           echo "failed=$FAILED" >> $GITHUB_OUTPUT
+          # Rename sarif for upload
+          mv results.sarif checkov.sarif || true
 
+      - name: Upload Checkov SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: checkov.sarif
+          category: checkov
+
+      # --- Final PR Comment ---
       - name: Post Summary Comment
         uses: actions/github-script@v7
         if: github.event_name == 'pull_request'
@@ -68,12 +89,12 @@ jobs:
             const tfsec_f = parseInt("${{ steps.tfsec.outputs.failed }}") || 0;
             const checkov_f = parseInt("${{ steps.checkov.outputs.failed }}") || 0;
 
-            const body = `## 🛡️ Infrastructure Scan Summary
+            const body = `## 🛡️ Production Security Scan Results
             
             | Tool | Status | Passed ✅ | Failed ❌ |
             | :--- | :--- | :--- | :--- |
-            | **tfsec** | ${tfsec_f > 0 ? '❌ Failed' : '✅ Passed'} | ${{ steps.tfsec.outputs.passed }} | ${tfsec_f} |
-            | **Checkov** | ${checkov_f > 0 ? '❌ Failed' : '✅ Passed'} | ${{ steps.checkov.outputs.passed }} | ${checkov_f} |
+            | **tfsec** | ${tfsec_f > 0 ? '🔴 High Risk' : '🟢 Secure'} | ${{ steps.tfsec.outputs.passed }} | ${tfsec_f} |
+            | **Checkov** | ${checkov_f > 0 ? '🔴 High Risk' : '🟢 Secure'} | ${{ steps.checkov.outputs.passed }} | ${checkov_f} |
 
             ### 🔍 TFLint Suggestions
             \`\`\`text
@@ -81,7 +102,7 @@ jobs:
             \`\`\`
             
             ---
-            *Report generated by GitHub Actions*`;
+            _Report generated automatically for commit ${context.sha}_`;
 
             github.rest.issues.createComment({
               issue_number: context.payload.pull_request.number,
