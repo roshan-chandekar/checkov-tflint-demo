@@ -49,11 +49,13 @@ jobs:
         id: checkov
         run: |
           pip install checkov
+          # Run checkov and ensure we get a clean JSON file
           checkov -d . --output json --soft-fail > checkov_results.json || true
           
-          # Parse counts
-          PASSED=$(jq '.summary.passed' checkov_results.json)
-          FAILED=$(jq '.summary.failed' checkov_results.json)
+          # This JQ filter handles both a single object or an array of results
+          PASSED=$(jq '[. | if type=="array" then .[].summary.passed else .summary.passed end] | add' checkov_results.json)
+          FAILED=$(jq '[. | if type=="array" then .[].summary.failed else .summary.failed end] | add' checkov_results.json)
+          
           echo "passed=$PASSED" >> $GITHUB_OUTPUT
           echo "failed=$FAILED" >> $GITHUB_OUTPUT
 
