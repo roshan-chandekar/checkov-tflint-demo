@@ -24,8 +24,12 @@ jobs:
         id: tflint
         run: |
           tflint --init
-          # Capture output, strip colors, and handle empty cases
-          REPORT=$(tflint -f compact | sed 's/\x1b\[[0-9;]*m//g') || true
+          
+          # Run TFLint and capture output.
+          # [ $? -eq 2 ] ensures we don't fail the build if issues are found, 
+          # but we do fail if there's a config error (exit code 1).
+          REPORT=$(tflint -f compact | sed 's/\x1b\[[0-9;]*m//g') || [ $? -eq 2 ]
+          
           echo "stdout<<EOF" >> $GITHUB_OUTPUT
           echo "${REPORT:-✅ No linting issues found.}" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
