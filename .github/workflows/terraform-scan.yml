@@ -28,10 +28,17 @@ jobs:
         id: tflint
         run: |
           tflint --init
+          
+          # Run tflint, capture output to a file, and ignore the exit code temporarily
+          tflint -f compact > tflint_report.txt || true
+          
+          # Clean up the output (remove ANSI color codes if any)
+          sed -i 's/\x1b\[[0-9;]*m//g' tflint_report.txt
+          
+          # Write to GITHUB_OUTPUT using a multi-line delimiter
           echo "stdout<<EOF" >> $GITHUB_OUTPUT
-          tflint -f compact >> $GITHUB_OUTPUT
+          cat tflint_report.txt >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
-        continue-on-error: true
 
       - name: Run tfsec
         id: tfsec
