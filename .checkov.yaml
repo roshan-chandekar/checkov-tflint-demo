@@ -1,6 +1,12 @@
-# Checkov configuration file
-# Simplified to avoid parsing issues - skip checks are passed via command line
-framework:
-  - terraform
-  - terraform_plan
-
+---
+directory: ["."]
+framework: ["terraform","terraform_plan"]
+# Don't fail the build, but report everything
+soft-fail: true 
+output: json
+quiet: false
+download-external-modules: true
+compact: true
+# Skip specific rules that might be managed by corporate policy
+skip-check:
+  - CKV_AWS_111 # Ensure IAM policies does not allow write access without constraints

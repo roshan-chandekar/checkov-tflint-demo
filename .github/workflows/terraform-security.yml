@@ -5,13 +5,12 @@ on:
     branches: [ main, dev ]
   workflow_dispatch:
 
-# Production Best Practice: Cancel old runs if new commits are pushed
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  scan:
+  terraform-scan:
     name: "Security & Linting"
     runs-on: ubuntu-latest
     permissions:
@@ -39,62 +38,64 @@ jobs:
         id: tflint
         run: |
           tflint --init
-          # We use '|| [ $? -eq 2 ]' to allow the script to continue if linting issues are found
+          # We capture output while ignoring exit code 2 (issues found)
           REPORT=$(tflint -f compact | sed 's/\x1b\[[0-9;]*m//g') || [ $? -eq 2 ]
           echo "stdout<<EOF" >> $GITHUB_OUTPUT
           echo "${REPORT:-✅ No linting issues found.}" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
-      # --- tfsec ---
+      # --- tfsec with Fallback ---
       - name: Run tfsec
         id: tfsec
         run: |
           curl -sSLo ./tfsec https://github.com/aquasecurity/tfsec/releases/latest/download/tfsec-linux-amd64 && chmod +x ./tfsec
           ./tfsec . --format json > tfsec_results.json || true
           
-          echo "failed=$(jq '[.results[] | select(.status=="fail")] | length' tfsec_results.json || echo 0)" >> $GITHUB_OUTPUT
-          echo "passed=$(jq '[.results[] | select(.status=="pass")] | length' tfsec_results.json || echo 0)" >> $GITHUB_OUTPUT
+          # Failsafe parsing
+          FAILED=$(jq '[.results[] | select(.status=="fail")] | length' tfsec_results.json || echo 0)
+          PASSED=$(jq '[.results[] | select(.status=="pass")] | length' tfsec_results.json || echo 0)
+          echo "failed=${FAILED:-0}" >> $GITHUB_OUTPUT
+          echo "passed=${PASSED:-0}" >> $GITHUB_OUTPUT
 
-# --- Checkov (Hardened for Production) ---
+      # --- Checkov (Hardened for Production) ---
       - name: Run Checkov
         id: checkov
         run: |
           pip install checkov
-          # Run checkov. We use '|| true' to prevent the job from stopping on security failures.
+          # Generate JSON and SARIF. 2>&1 ensures errors don't pollute the JSON file.
           checkov -d . --output json --output sarif --soft-fail > checkov_results.json 2>&1 || true
           
-          # Check if the output is valid JSON. If not, create a dummy JSON to prevent JQ error.
+          # Validation: If file is not valid JSON, create a dummy result
           if ! jq '.' checkov_results.json >/dev/null 2>&1; then
             echo '{"summary": {"passed": 0, "failed": 0}}' > checkov_results.json
           fi
 
-          # Robust JQ: Extract counts safely
+          # Robust JQ extraction
           PASSED=$(jq '[. | if type=="array" then .[].summary.passed else .summary.passed end] | add | . // 0' checkov_results.json)
           FAILED=$(jq '[. | if type=="array" then .[].summary.failed else .summary.failed end] | add | . // 0' checkov_results.json)
           
           echo "passed=$PASSED" >> $GITHUB_OUTPUT
           echo "failed=$FAILED" >> $GITHUB_OUTPUT
 
-          # Verify if SARIF exists, if not create an empty one to satisfy the upload step
+          # Failsafe for SARIF upload
           if [ ! -f "results.sarif" ]; then
-            echo '{"version":"2.1.0","runs":[]}' > checkov.sarif
+            echo '{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"Checkov"}},"results":[]}]}' > checkov.sarif
           else
             mv results.sarif checkov.sarif
           fi
 
-      - name: Upload Checkov SARIF
-        uses: github/codeql-action/upload-sarif@v4  # Updated to v4 to avoid deprecation warning
+      - name: Upload SARIF to Security Tab
+        uses: github/codeql-action/upload-sarif@v4
         if: always()
         with:
           sarif_file: checkov.sarif
           category: checkov
 
-      # --- Final PR Comment ---
+      # --- Consolidated PR Comment ---
       - name: Post Summary Comment
         uses: actions/github-script@v7
         if: github.event_name == 'pull_request'
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const tflint = `${{ steps.tflint.outputs.stdout }}`;
             const tfsec_f = parseInt("${{ steps.tfsec.outputs.failed }}") || 0;
@@ -113,7 +114,7 @@ jobs:
             \`\`\`
             
             ---
-            _Report generated automatically for commit ${context.sha}_`;
+            _Results available in the **Security** tab and via automated annotations below._`;
 
             github.rest.issues.createComment({
               issue_number: context.payload.pull_request.number,
