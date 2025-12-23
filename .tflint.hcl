@@ -1,6 +1,7 @@
 config {
-  call_module_type = "local"
-  force = false
+  format = "compact"
+  module = true
+  plugin_dir = "~/.tflint.d/plugins"
 }
 
 plugin "aws" {
