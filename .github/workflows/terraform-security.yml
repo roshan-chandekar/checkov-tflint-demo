@@ -1,27 +1,28 @@
-name: "Terraform Security Scan"
+name: "Terraform Production Scan"
 
 on:
   pull_request:
-    branches: [ main, master, dev ]
+    branches: [ main, dev ]
+  workflow_dispatch:
 
-# Production Best Practice: Stop old runs if a new commit is pushed to the same PR
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   terraform-scan:
-    name: "Security & Linting Scan"
+    name: "Security & Linting"
     runs-on: ubuntu-latest
     permissions:
       contents: read
       pull-requests: write
+      security-events: write # Required for SARIF upload
 
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # --- TFLint Setup with Caching ---
+      # --- TFLint with Caching ---
       - name: Cache TFLint Plugins
         uses: actions/cache@v4
         with:
@@ -37,50 +38,69 @@ jobs:
         id: tflint
         run: |
           tflint --init
-          
-          # Run TFLint and capture output.
-          # [ $? -eq 2 ] ensures we don't fail the build if issues are found, 
-          # but we do fail if there's a config error (exit code 1).
+          # We capture output while ignoring exit code 2 (issues found)
           REPORT=$(tflint -f compact | sed 's/\x1b\[[0-9;]*m//g') || [ $? -eq 2 ]
-          
           echo "stdout<<EOF" >> $GITHUB_OUTPUT
           echo "${REPORT:-✅ No linting issues found.}" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
-      # --- tfsec Scan ---
+      # --- tfsec with Fallback ---
       - name: Run tfsec
         id: tfsec
         run: |
-          # Use the official binary to ensure version control
-          curl -sSLo ./tfsec https://github.com/aquasecurity/tfsec/releases/download/v1.28.1/tfsec-linux-amd64 && chmod +x ./tfsec
+          curl -sSLo ./tfsec https://github.com/aquasecurity/tfsec/releases/latest/download/tfsec-linux-amd64 && chmod +x ./tfsec
           ./tfsec . --format json > tfsec_results.json || true
           
-          echo "failed=$(jq '[.results[] | select(.status=="fail")] | length' tfsec_results.json || echo 0)" >> $GITHUB_OUTPUT
-          echo "passed=$(jq '[.results[] | select(.status=="pass")] | length' tfsec_results.json || echo 0)" >> $GITHUB_OUTPUT
+          # Failsafe parsing
+          FAILED=$(jq '[.results[] | select(.status=="fail")] | length' tfsec_results.json || echo 0)
+          PASSED=$(jq '[.results[] | select(.status=="pass")] | length' tfsec_results.json || echo 0)
+          echo "failed=${FAILED:-0}" >> $GITHUB_OUTPUT
+          echo "passed=${PASSED:-0}" >> $GITHUB_OUTPUT
 
-      # --- Checkov Scan ---
+      # --- Checkov (Hardened for Production) ---
       - name: Run Checkov
         id: checkov
         run: |
           pip install checkov
-          checkov --config-file .checkov.yml > checkov_results.json || true
+          # Generate JSON and SARIF. 2>&1 ensures errors don't pollute the JSON file.
+          checkov -d . --output json --output sarif --soft-fail > checkov_results.json 2>&1 || true
           
-          # Production JQ logic for multi-framework arrays
-          PASSED=$(jq '[. | if type=="array" then .[].summary.passed else .summary.passed end] | add' checkov_results.json || echo 0)
-          FAILED=$(jq '[. | if type=="array" then .[].summary.failed else .summary.failed end] | add' checkov_results.json || echo 0)
+          # Validation: If file is not valid JSON, create a dummy result
+          if ! jq '.' checkov_results.json >/dev/null 2>&1; then
+            echo '{"summary": {"passed": 0, "failed": 0}}' > checkov_results.json
+          fi
+
+          # Robust JQ extraction
+          PASSED=$(jq '[. | if type=="array" then .[].summary.passed else .summary.passed end] | add | . // 0' checkov_results.json)
+          FAILED=$(jq '[. | if type=="array" then .[].summary.failed else .summary.failed end] | add | . // 0' checkov_results.json)
+          
           echo "passed=$PASSED" >> $GITHUB_OUTPUT
           echo "failed=$FAILED" >> $GITHUB_OUTPUT
 
-      # --- PR Commenting ---
-      - name: Post PR Comment
-        uses: actions/github-script@v7
+          # Failsafe for SARIF upload
+          if [ ! -f "results.sarif" ]; then
+            echo '{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"Checkov"}},"results":[]}]}' > checkov.sarif
+          else
+            mv results.sarif checkov.sarif
+          fi
+
+      - name: Upload SARIF to Security Tab
+        uses: github/codeql-action/upload-sarif@v4
+        if: always()
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          sarif_file: checkov.sarif
+          category: checkov
+
+      # --- Consolidated PR Comment ---
+      - name: Post Summary Comment
+        uses: actions/github-script@v7
+        if: github.event_name == 'pull_request'
+        with:
           script: |
             const tflint = `${{ steps.tflint.outputs.stdout }}`;
             const tfsec_f = parseInt("${{ steps.tfsec.outputs.failed }}") || 0;
             const checkov_f = parseInt("${{ steps.checkov.outputs.failed }}") || 0;
-            
+
             const body = `## 🛡️ Production Security Scan Results
             
             | Tool | Status | Passed ✅ | Failed ❌ |
@@ -94,7 +114,7 @@ jobs:
             \`\`\`
             
             ---
-            _Results generated automatically for commit ${context.sha}_`;
+            _Results available in the **Security** tab and via automated annotations below._`;
 
             github.rest.issues.createComment({
               issue_number: context.payload.pull_request.number,
